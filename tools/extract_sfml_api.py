@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,38 @@ def default_libclang_path() -> str:
         if Path(candidate).is_file():
             return candidate
     return candidates[0]
+
+
+def system_sysroot() -> str | None:
+    """Return the Xcode SDK path on macOS, or None if not found / not on macOS."""
+    if platform.system() != "Darwin":
+        return None
+    try:
+        return subprocess.check_output(
+            ["xcrun", "--show-sdk-path"], encoding="utf-8"
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def clang_resource_dir(libclang_path: str) -> str | None:
+    """Try to find the clang resource directory from a nearby clang binary."""
+    if platform.system() != "Darwin":
+        return None
+    libclang = Path(libclang_path)
+    # Homebrew: /opt/homebrew/opt/llvm/lib/libclang.dylib → /opt/homebrew/opt/llvm/bin/clang
+    clang_candidates = [
+        libclang.parent.parent / "bin" / "clang",
+    ]
+    for clang in clang_candidates:
+        if clang.is_file():
+            try:
+                return subprocess.check_output(
+                    [str(clang), "-print-resource-dir"], encoding="utf-8"
+                ).strip()
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+    return None
 
 
 def configure_libclang(path: str) -> None:
@@ -383,6 +416,7 @@ def parse_umbrella(
     include_dir: Path,
     standard: str,
     include_non_public: bool,
+    libclang_path: str = "",
 ) -> tuple[dict[Path, list[dict[str, Any]]], list[str]]:
     args = [
         f"-std={standard}",
@@ -393,6 +427,15 @@ def parse_umbrella(
         *[f"-D{macro}=" for macro in IGNORED_MACROS],
         *[f"-D{macro}" for macro in EXTRA_DEFINES],
     ]
+
+    sysroot = system_sysroot()
+    if sysroot:
+        args.append("-isysroot")
+        args.append(sysroot)
+        res_dir = clang_resource_dir(libclang_path)
+        if res_dir:
+            args.append("-resource-dir")
+            args.append(res_dir)
 
     umbrella_name = str(include_dir.parent / "__sfml_api_umbrella.hpp")
     umbrella_content = "\n".join(
@@ -452,6 +495,7 @@ def build_api(args: argparse.Namespace) -> dict[str, Any]:
         include_dir=include_dir,
         standard=args.standard,
         include_non_public=args.include_non_public,
+        libclang_path=args.libclang,
     )
 
     for header in headers:

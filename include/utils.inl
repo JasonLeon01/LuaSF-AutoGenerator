@@ -17,7 +17,7 @@ inline constexpr bool is_std_vector_v = is_std_vector<std::remove_cv_t<std::remo
 
 inline bool is_nil_object(const sol::object& object)
 {
-    return !object.valid() || object == sol::nil;
+    return !object.valid() || object == LUASF_SOL_NIL;
 }
 
 inline void throw_on_lua_error(const sol::protected_function_result& result)
@@ -94,7 +94,7 @@ std::vector<T> array_from_object(const sol::object& object)
 template <typename T>
 std::optional<T> optional_from_object(const sol::object& object)
 {
-    if (!object.valid() || object == sol::nil)
+    if (!object.valid() || object == LUASF_SOL_NIL)
         return std::nullopt;
     return object_as<T>(object);
 }
@@ -135,7 +135,7 @@ template <typename T>
 sol::object optional_to_object(sol::state_view lua, const std::optional<T>& value)
 {
     if (!value)
-        return sol::make_object(lua, sol::nil);
+        return sol::make_object(lua, LUASF_SOL_NIL);
 
     return as_lua_object(lua, *value);
 }
@@ -144,7 +144,7 @@ template <typename T>
 sol::object optional_to_object(sol::state_view lua, std::optional<T>&& value)
 {
     if (!value)
-        return sol::make_object(lua, sol::nil);
+        return sol::make_object(lua, LUASF_SOL_NIL);
 
     using U = std::remove_cv_t<T>;
     if constexpr (std::is_same_v<U, sf::String>)
@@ -169,7 +169,7 @@ template <typename T, typename Allocator>
 sol::object optional_to_object(sol::state_view lua, const std::optional<std::vector<T, Allocator>>& value)
 {
     if (!value)
-        return sol::make_object(lua, sol::nil);
+        return sol::make_object(lua, LUASF_SOL_NIL);
     return vector_to_object(lua, *value);
 }
 
@@ -177,7 +177,7 @@ template <typename T, typename Allocator>
 sol::object optional_to_object(sol::state_view lua, std::optional<std::vector<T, Allocator>>&& value)
 {
     if (!value)
-        return sol::make_object(lua, sol::nil);
+        return sol::make_object(lua, LUASF_SOL_NIL);
     return vector_to_object(lua, *value);
 }
 
@@ -358,7 +358,7 @@ struct function_converter<bool(void*, std::size_t&)>
             else if (returned.get_type() == sol::type::boolean)
             {
                 keepGoing = returned.as<bool>();
-                dataValue = sol::make_object(returned.lua_state(), sol::nil);
+                dataValue = sol::make_object(returned.lua_state(), LUASF_SOL_NIL);
             }
 
             if (!keepGoing || is_nil_object(dataValue))

@@ -27,6 +27,13 @@ if [ ! -f "third_party/sol2/include/sol2/sol.hpp" ]; then
     exit 1
 fi
 
+echo "Applying PR #1606 patch to sol2 (Clang 18+ optional::emplace fix)..."
+if command -v patch >/dev/null 2>&1; then
+    patch -N --forward "third_party/sol2/include/sol2/sol.hpp" < "$SCRIPT_DIR/cmake/sol/pr1606.patch" 2>/dev/null || true
+else
+    echo "Warning: 'patch' not found; skipping PR #1606 patch for sol2." >&2
+fi
+
 echo "Extracting SFML public API..."
 "$PYTHON_EXE" tools/extract_sfml_api.py
 

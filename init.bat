@@ -6,7 +6,7 @@ for /f "usebackq eol=# tokens=1,2 delims==" %%a in ("versions.conf") do set %%a=
 
 if not exist ".venv\Scripts\python.exe" (
     echo Creating Python virtual environment...
-    python -m venv .venv
+    py -3.12 -m venv .venv
     if errorlevel 1 exit /b 1
 )
 

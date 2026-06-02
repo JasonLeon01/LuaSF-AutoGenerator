@@ -6,7 +6,7 @@
 #include <SFML/System/String.hpp>
 #include <SFML/Window/Event.hpp>
 #include <SFML/Window/WindowHandle.hpp>
-#include <sol2/sol.hpp>
+#include "luasf_sol.hpp"
 
 #include "lua_stub.hpp"
 

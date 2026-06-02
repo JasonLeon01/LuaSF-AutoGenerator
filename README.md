@@ -8,7 +8,7 @@ The generated Lua module is named `LuaSF`. In CMake, consumers link against `Lua
 
 - CMake 3.21 or newer for the consumer example below.
 - A C++20-capable compiler when building LuaSF from source.
-- Python 3 with `venv` support for generation scripts.
+- Python 3.12 or newer for generation scripts.
 
 The bundled dependency versions are recorded in `versions.conf`.
 
@@ -70,6 +70,10 @@ add_subdirectory(LuaSF)
 
 add_executable(SFLua main.cpp)
 
+target_compile_definitions(SFLua PRIVATE
+    SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Scripts"
+)
+
 target_link_libraries(SFLua PRIVATE
     LuaSF::LuaSF
 )
@@ -100,6 +104,10 @@ target_include_directories(SFLua PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/LuaSF/third_party/Lua"
 )
 
+target_compile_definitions(SFLua PRIVATE
+    SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Scripts"
+)
+
 target_link_libraries(SFLua PRIVATE
     LuaSF::LuaSF
     LuaSF_lua_shared
@@ -110,13 +118,46 @@ luasf_copy_runtime_dlls(SFLua)
 
 `LUASF_LUA_STUB_OUTPUT`, the Lua include directory, and `LuaSF_lua_shared` are only needed when your own executable needs the generated Lua stub path or calls the bundled Lua C API directly. If your executable only links to LuaSF and never includes Lua headers, you can omit those lines. `luasf_copy_runtime_dlls(SFLua)` is available in both source and packaged integration.
 
+## C++ Example
+
+After linking against `LuaSF::LuaSF`, this example creates a Lua state with all LuaSF bindings registered, then runs `Entry.lua` from the `Scripts/` folder. `SCRIPTS_DIR` is baked at build time via `target_compile_definitions` (shown in the CMake examples above), so the path works regardless of the current working directory.
+
+```cpp
+#include <LuaSF.hpp>
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
+
+#ifndef SCRIPTS_DIR
+#define SCRIPTS_DIR "."
+#endif
+
+int main()
+{
+    lua_State* L = LuaSF_create_state();
+    if (L == nullptr)
+        return 1;
+
+    if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+    {
+        fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
+        lua_close(L);
+        return 1;
+    }
+
+    lua_close(L);
+    return 0;
+}
+```
+
+When using source integration, the `target_include_directories` for the Lua headers (shown in the source CMake example above) must be active so that `<lua.h>` and `<lauxlib.h>` are found.
+
 ## Lua Example
 
 After the executable can load the LuaSF module and runtime libraries, Lua code can create and draw SFML objects directly. This example opens a window, enables 8x anti-aliasing, draws a green circle, and exits when the window is closed.
 
 ```lua
-local sf = require("LuaSF")
-
 -- Create a window
 local mode = sf.VideoMode.new(sf.Vector2u.new(800, 600))
 local ctx = sf.ContextSettings.new()

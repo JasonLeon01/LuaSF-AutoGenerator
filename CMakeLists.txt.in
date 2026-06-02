@@ -65,10 +65,12 @@ if(NOT TARGET ${{LUASF_LUA_TARGET}})
     target_include_directories(${{LUASF_LUA_TARGET}} PUBLIC
         "${{LUASF_ROOT}}/third_party/Lua"
     )
-    target_compile_definitions(${{LUASF_LUA_TARGET}}
-        PRIVATE LUA_BUILD_AS_DLL
-        INTERFACE LUA_BUILD_AS_DLL
-    )
+    if(WIN32)
+        target_compile_definitions(${{LUASF_LUA_TARGET}}
+            PRIVATE LUA_BUILD_AS_DLL LUA_CORE
+            INTERFACE LUA_BUILD_AS_DLL
+        )
+    endif()
     set_target_properties(${{LUASF_LUA_TARGET}} PROPERTIES
         C_STANDARD 99
         C_STANDARD_REQUIRED ON

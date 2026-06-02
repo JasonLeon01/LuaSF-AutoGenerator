@@ -9,7 +9,7 @@ sol::object event_get_if(sol::state_view lua, sf::Event& event)
 {
     if (auto* value = event.getIf<T>())
         return sol::make_object(lua, std::ref(*value));
-    return sol::make_object(lua, sol::nil);
+    return sol::make_object(lua, lua_sf::LUASF_SOL_NIL);
 }
 
 template <typename T>

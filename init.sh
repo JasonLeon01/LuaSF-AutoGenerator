@@ -4,7 +4,7 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-PYTHON_BIN=${PYTHON:-python3}
+PYTHON_BIN=${PYTHON:-python3.12}
 VENV_PYTHON=".venv/bin/python"
 
 SFML_VERSION=
@@ -78,4 +78,11 @@ if [ ! -f "third_party/sol2/include/sol2/sol.hpp" ]; then
     done
 else
     echo "Using existing third_party/sol2."
+fi
+
+echo "Applying PR #1606 patch to sol2 (Clang 18+ optional::emplace fix)..."
+if command -v patch >/dev/null 2>&1; then
+    patch -N --forward "third_party/sol2/include/sol2/sol.hpp" < "$SCRIPT_DIR/cmake/sol/pr1606.patch" 2>/dev/null || true
+else
+    echo "Warning: 'patch' not found; skipping PR #1606 patch for sol2." >&2
 fi
