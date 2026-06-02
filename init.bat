@@ -1,0 +1,51 @@
+@echo off
+
+setlocal EnableDelayedExpansion
+cd /d "%~dp0"
+for /f "usebackq eol=# tokens=1,2 delims==" %%a in ("versions.conf") do set %%a=%%b
+
+if not exist ".venv\Scripts\python.exe" (
+    echo Creating Python virtual environment...
+    python -m venv .venv
+    if errorlevel 1 exit /b 1
+)
+
+echo Installing Python requirements into .venv...
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 exit /b 1
+
+if not exist "third_party\SFML\CMakeLists.txt" (
+    call "%~dp0download_lib.bat" "SFML" ^
+        "https://github.com/SFML/SFML/archive/refs/tags/%SFML_VERSION%.zip" ^
+        "sfml.zip" ^
+        "SFML-%SFML_VERSION%" ^
+        "SFML"
+    if errorlevel 1 exit /b 1
+) else (
+    echo Using existing third_party\SFML.
+)
+
+if not exist "third_party\Lua\lua.h" (
+    call "%~dp0download_lib.bat" "Lua" ^
+        "https://github.com/lua/lua/archive/refs/tags/v%LUA_VERSION%.zip" ^
+        "lua.zip" ^
+        "lua-%LUA_VERSION%" ^
+        "Lua"
+    if errorlevel 1 exit /b 1
+) else (
+    echo Using existing third_party\Lua.
+)
+
+if not exist "third_party\sol2\include\sol2\sol.hpp" (
+    echo Downloading sol2 headers...
+    mkdir "third_party\sol2\include\sol2" 2>nul
+    for %%f in (config.hpp forward.hpp sol.hpp) do (
+        powershell -Command "Invoke-WebRequest -Uri 'https://github.com/ThePhD/sol2/releases/download/v%SOL2_VERSION%/%%f' -OutFile 'third_party\sol2\include\sol2\%%f'"
+        if errorlevel 1 (
+            echo Failed to download sol2 %%f.
+            exit /b 1
+        )
+    )
+) else (
+    echo Using existing third_party\sol2.
+)

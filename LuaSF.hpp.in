@@ -1,0 +1,19 @@
+#pragma once
+
+#if defined(_WIN32)
+#if defined(LUASF_BUILD_DLL)
+#define LUASF_API __declspec(dllexport)
+#else
+#define LUASF_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define LUASF_API __attribute__((visibility("default")))
+#else
+#define LUASF_API
+#endif
+
+struct lua_State;
+
+extern "C" LUASF_API int {module_name}_register(lua_State* state);
+extern "C" LUASF_API lua_State* {state_factory_name}();
+extern "C" LUASF_API int {module_name}_write_stub(const char* path);

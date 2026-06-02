@@ -1,0 +1,310 @@
+cmake_minimum_required(VERSION 3.18...3.31)
+
+project("{project_name}" LANGUAGES C CXX)
+
+set(LUASF_ROOT "${{CMAKE_CURRENT_LIST_DIR}}")
+set(LUASF_BINARY_ROOT "${{CMAKE_CURRENT_BINARY_DIR}}")
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+
+option(LUASF_BUILD_SHARED_SFML "Build SFML as shared libraries for LuaSF" ON)
+option(LUASF_GENERATE_LUA_STUB "Generate Lua language-server stub from the built LuaSF module" ON)
+if(NOT DEFINED LUASF_LUA_STUB_OUTPUT)
+    set(LUASF_LUA_STUB_OUTPUT "${{LUASF_BINARY_ROOT}}/{module_name}.lua")
+endif()
+set(LUASF_LUA_STUB_OUTPUT "${{LUASF_LUA_STUB_OUTPUT}}" CACHE FILEPATH "LuaSF Lua stub output path")
+
+# When LuaSF is used through add_subdirectory(), the parent project owns the
+# active configuration. CLion profiles, CMAKE_BUILD_TYPE, and --config Debug /
+# Release will flow through normally. This default only applies when output/ is
+# configured directly as the top-level project.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(LUASF_DEFAULT_CONFIG "Release" CACHE STRING "Default build configuration for the standalone LuaSF project")
+    # Uncomment this line to make standalone LuaSF builds default to Debug.
+    # set(LUASF_DEFAULT_CONFIG "Debug" CACHE STRING "Default build configuration for the standalone LuaSF project" FORCE)
+    set_property(CACHE LUASF_DEFAULT_CONFIG PROPERTY STRINGS Release Debug RelWithDebInfo MinSizeRel)
+
+    if(CMAKE_CONFIGURATION_TYPES)
+        set(_luasf_configuration_types "${{LUASF_DEFAULT_CONFIG}};${{CMAKE_CONFIGURATION_TYPES}}")
+        list(REMOVE_DUPLICATES _luasf_configuration_types)
+        set(CMAKE_CONFIGURATION_TYPES "${{_luasf_configuration_types}}" CACHE STRING "LuaSF build configurations" FORCE)
+    elseif(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE "${{LUASF_DEFAULT_CONFIG}}" CACHE STRING "LuaSF build type" FORCE)
+        set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Release Debug RelWithDebInfo MinSizeRel)
+    endif()
+
+    message(STATUS "LuaSF default build configuration: ${{LUASF_DEFAULT_CONFIG}}")
+endif()
+
+set(BUILD_SHARED_LIBS ${{LUASF_BUILD_SHARED_SFML}})
+set(SFML_BUILD_EXAMPLES OFF)
+set(SFML_BUILD_DOC OFF)
+set(SFML_BUILD_TEST_SUITE OFF)
+
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target")
+endif()
+
+if(NOT TARGET sfml-system)
+    add_subdirectory("${{LUASF_ROOT}}/third_party/SFML" "${{LUASF_BINARY_ROOT}}/third_party/SFML")
+endif()
+
+set(LUASF_LUA_TARGET "{target_name}_lua_shared")
+if(NOT TARGET ${{LUASF_LUA_TARGET}})
+    file(GLOB LUA_SOURCES CONFIGURE_DEPENDS
+        "${{LUASF_ROOT}}/third_party/Lua/*.c"
+    )
+    list(REMOVE_ITEM LUA_SOURCES
+        "${{LUASF_ROOT}}/third_party/Lua/lua.c"
+        "${{LUASF_ROOT}}/third_party/Lua/luac.c"
+        "${{LUASF_ROOT}}/third_party/Lua/onelua.c"
+        "${{LUASF_ROOT}}/third_party/Lua/ltests.c"
+    )
+
+    add_library(${{LUASF_LUA_TARGET}} SHARED ${{LUA_SOURCES}})
+    target_include_directories(${{LUASF_LUA_TARGET}} PUBLIC
+        "${{LUASF_ROOT}}/third_party/Lua"
+    )
+    target_compile_definitions(${{LUASF_LUA_TARGET}}
+        PRIVATE LUA_BUILD_AS_DLL
+        INTERFACE LUA_BUILD_AS_DLL
+    )
+    set_target_properties(${{LUASF_LUA_TARGET}} PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        OUTPUT_NAME "lua"
+        RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+        LIBRARY_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+        ARCHIVE_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/lib"
+    )
+endif()
+
+set(LUASF_BINDING_SOURCES
+{binding_sources}
+    "{entry_source}"
+)
+
+set(LUASF_SOL_COMPAT_INCLUDE "${{LUASF_BINARY_ROOT}}/generated_include")
+file(MAKE_DIRECTORY "${{LUASF_SOL_COMPAT_INCLUDE}}/sol")
+configure_file(
+    "${{LUASF_ROOT}}/third_party/sol2/include/sol2/config.hpp"
+    "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/config.hpp"
+    COPYONLY
+)
+configure_file(
+    "${{LUASF_ROOT}}/third_party/sol2/include/sol2/forward.hpp"
+    "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/forward.hpp"
+    COPYONLY
+)
+configure_file(
+    "${{LUASF_ROOT}}/third_party/sol2/include/sol2/sol.hpp"
+    "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/sol.hpp"
+    COPYONLY
+)
+file(WRITE "${{LUASF_SOL_COMPAT_INCLUDE}}/lua.h"
+"#include \"${{LUASF_ROOT}}/third_party/Lua/lua.h\"
+#undef LUA_VERSION_NUM
+#define LUA_VERSION_NUM 504
+#undef lua_newstate
+#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
+"
+)
+file(WRITE "${{LUASF_SOL_COMPAT_INCLUDE}}/lauxlib.h"
+"#include \"${{LUASF_ROOT}}/third_party/Lua/lauxlib.h\"
+#undef LUA_VERSION_NUM
+#define LUA_VERSION_NUM 504
+#undef lua_newstate
+#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
+"
+)
+file(WRITE "${{LUASF_SOL_COMPAT_INCLUDE}}/lualib.h"
+"#include \"${{LUASF_ROOT}}/third_party/Lua/lualib.h\"
+#undef LUA_VERSION_NUM
+#define LUA_VERSION_NUM 504
+#undef lua_newstate
+#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
+"
+)
+
+set(LUASF_BINDING_HEADERS
+{binding_headers}
+    "{public_header}"
+)
+
+add_library({target_name} SHARED
+    ${{LUASF_BINDING_SOURCES}}
+    ${{LUASF_BINDING_HEADERS}}
+)
+
+target_compile_features({target_name} PRIVATE cxx_std_20)
+
+target_include_directories({target_name}
+    PUBLIC
+        "$<BUILD_INTERFACE:${{LUASF_ROOT}}/include>"
+    PRIVATE
+        "${{LUASF_SOL_COMPAT_INCLUDE}}"
+        "${{LUASF_ROOT}}/include"
+        "${{LUASF_ROOT}}/third_party/SFML/include"
+        "${{LUASF_ROOT}}/third_party/Lua"
+        "${{LUASF_ROOT}}/third_party/sol2/include"
+)
+
+target_compile_definitions({target_name} PRIVATE
+    SOL_ALL_SAFETIES_ON=1
+    LUASF_BUILD_DLL=1
+)
+
+target_link_libraries({target_name} PRIVATE
+    ${{LUASF_LUA_TARGET}}
+    sfml-system
+    sfml-window
+    sfml-graphics
+    sfml-audio
+    sfml-network
+)
+
+set_target_properties({target_name} PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "{module_name}"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+    LIBRARY_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+    ARCHIVE_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/lib"
+)
+
+if(WIN32)
+    set_target_properties({target_name} PROPERTIES SUFFIX ".dll")
+endif()
+
+if(NOT TARGET {target_name}::{target_name})
+    add_library({target_name}::{target_name} ALIAS {target_name})
+endif()
+
+function(luasf_copy_runtime_files target_name)
+    if(NOT TARGET "${{target_name}}")
+        message(FATAL_ERROR "luasf_copy_runtime_files target does not exist: ${{target_name}}")
+    endif()
+
+    set(_luasf_runtime_files
+        "$<TARGET_FILE:{target_name}>"
+        "$<TARGET_FILE:{target_name}_lua_shared>"
+    )
+    foreach(_luasf_runtime_target IN ITEMS
+        sfml-system
+        sfml-window
+        sfml-graphics
+        sfml-audio
+        sfml-network
+    )
+        if(TARGET "${{_luasf_runtime_target}}")
+            list(APPEND _luasf_runtime_files "$<TARGET_FILE:${{_luasf_runtime_target}}>")
+        endif()
+    endforeach()
+
+    add_custom_command(TARGET "${{target_name}}" POST_BUILD
+        COMMAND "${{CMAKE_COMMAND}}" -E copy_if_different
+            ${{_luasf_runtime_files}}
+            "$<TARGET_FILE_DIR:${{target_name}}>"
+        VERBATIM
+    )
+endfunction()
+
+function(luasf_copy_runtime_dlls target_name)
+    luasf_copy_runtime_files("${{target_name}}")
+endfunction()
+
+if(MSVC)
+    target_compile_options({target_name} PRIVATE /permissive- /EHsc /bigobj)
+else()
+    target_compile_options({target_name} PRIVATE -Wall -Wextra)
+endif()
+
+function(luasf_add_lua_stub target_name)
+    if(NOT LUASF_GENERATE_LUA_STUB)
+        return()
+    endif()
+
+    if(CMAKE_CROSSCOMPILING)
+        message(WARNING "LUASF_GENERATE_LUA_STUB is ON, but LuaSF cannot run the stub dumper while cross-compiling.")
+        return()
+    endif()
+
+    add_executable(${{target_name}}_lua_stub_dump EXCLUDE_FROM_ALL
+        "${{LUASF_ROOT}}/tools/lua_stub_dump.cpp"
+    )
+    target_compile_features(${{target_name}}_lua_stub_dump PRIVATE cxx_std_20)
+    target_link_libraries(${{target_name}}_lua_stub_dump PRIVATE
+        ${{CMAKE_DL_LIBS}}
+    )
+    set_target_properties(${{target_name}}_lua_stub_dump PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+    )
+    add_dependencies(${{target_name}}_lua_stub_dump
+        ${{LUASF_LUA_TARGET}}
+        sfml-system
+        sfml-window
+        sfml-graphics
+        sfml-audio
+        sfml-network
+    )
+
+    set(_luasf_stub_args
+        "$<TARGET_FILE:${{target_name}}>"
+        "{module_name}_write_stub"
+        "${{LUASF_LUA_STUB_OUTPUT}}"
+    )
+
+    if(WIN32)
+        add_custom_command(TARGET ${{target_name}}_lua_stub_dump POST_BUILD
+            COMMAND "${{CMAKE_COMMAND}}" -E copy_if_different
+                "$<TARGET_FILE:sfml-system>"
+                "$<TARGET_FILE:sfml-window>"
+                "$<TARGET_FILE:sfml-graphics>"
+                "$<TARGET_FILE:sfml-audio>"
+                "$<TARGET_FILE:sfml-network>"
+                "$<TARGET_FILE_DIR:${{target_name}}_lua_stub_dump>"
+            VERBATIM
+        )
+        set(_luasf_stub_command
+            "$<TARGET_FILE:${{target_name}}_lua_stub_dump>"
+            ${{_luasf_stub_args}}
+        )
+    else()
+        if(APPLE)
+            set(_luasf_stub_command
+                "${{CMAKE_COMMAND}}" -E env
+                "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:${{target_name}}>:$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>:$<TARGET_FILE_DIR:sfml-system>:$ENV{{DYLD_LIBRARY_PATH}}"
+                "$<TARGET_FILE:${{target_name}}_lua_stub_dump>"
+                ${{_luasf_stub_args}}
+            )
+        else()
+            set(_luasf_stub_command
+                "${{CMAKE_COMMAND}}" -E env
+                "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:${{target_name}}>:$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>:$<TARGET_FILE_DIR:sfml-system>:$ENV{{LD_LIBRARY_PATH}}"
+                "$<TARGET_FILE:${{target_name}}_lua_stub_dump>"
+                ${{_luasf_stub_args}}
+            )
+        endif()
+    endif()
+
+    add_dependencies(${{target_name}} ${{target_name}}_lua_stub_dump)
+
+    add_custom_command(TARGET ${{target_name}} POST_BUILD
+        COMMAND "${{CMAKE_COMMAND}}" -E make_directory "$<SHELL_PATH:${{LUASF_BINARY_ROOT}}>"
+        COMMAND ${{_luasf_stub_command}}
+        VERBATIM
+        COMMENT "Generating LuaSF Lua stub"
+    )
+
+    add_custom_target(${{target_name}}_lua_stub
+        COMMAND "${{CMAKE_COMMAND}}" -E make_directory "$<SHELL_PATH:${{LUASF_BINARY_ROOT}}>"
+        COMMAND ${{_luasf_stub_command}}
+        DEPENDS ${{target_name}} ${{target_name}}_lua_stub_dump
+        VERBATIM
+        COMMENT "Generating LuaSF Lua stub"
+    )
+endfunction()
+
+luasf_add_lua_stub({target_name})

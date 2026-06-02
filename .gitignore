@@ -1,0 +1,6 @@
+third_party/
+.venv/
+output/
+build/
+CMakeLists.txt
+**/__pycache__/**
