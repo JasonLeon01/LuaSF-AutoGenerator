@@ -11,9 +11,10 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
-ORDER_CACHE_VERSION = 3
+ORDER_CACHE_VERSION = 4
 MODULE_ORDER = {"System": 0, "Window": 1, "Graphics": 2, "Audio": 3, "Network": 4}
-TYPE_DECL_KINDS = {"CLASS_DECL", "STRUCT_DECL", "ENUM_DECL", "TYPEDEF_DECL", "TYPE_ALIAS_DECL"}
+TYPE_DECL_KINDS = {"CLASS_DECL", "STRUCT_DECL", "CLASS_TEMPLATE", "ENUM_DECL", "TYPEDEF_DECL", "TYPE_ALIAS_DECL"}
+INCLUDE_RE = re.compile(r'#\s*include\s+[<"]([^">]+)[">]')
 
 MANUAL_DEPENDENCIES = {
     "bind_Vector": {"bind_Angle", "bind_Color"},
@@ -24,75 +25,20 @@ MANUAL_DEPENDENCIES = {
     "bind_Drawable": set(),
 }
 
-MANUAL_TYPE_OWNERS = {
-    "sf::Drawable": "bind_Drawable",
-    "sf::Event": "bind_Event",
-    "sf::Event::Closed": "bind_Event",
-    "sf::Event::Resized": "bind_Event",
-    "sf::Event::FocusLost": "bind_Event",
-    "sf::Event::FocusGained": "bind_Event",
-    "sf::Event::TextEntered": "bind_Event",
-    "sf::Event::KeyPressed": "bind_Event",
-    "sf::Event::KeyReleased": "bind_Event",
-    "sf::Event::MouseWheelScrolled": "bind_Event",
-    "sf::Event::MouseButtonPressed": "bind_Event",
-    "sf::Event::MouseButtonReleased": "bind_Event",
-    "sf::Event::MouseMoved": "bind_Event",
-    "sf::Event::MouseMovedRaw": "bind_Event",
-    "sf::Event::MouseEntered": "bind_Event",
-    "sf::Event::MouseLeft": "bind_Event",
-    "sf::Event::JoystickButtonPressed": "bind_Event",
-    "sf::Event::JoystickButtonReleased": "bind_Event",
-    "sf::Event::JoystickMoved": "bind_Event",
-    "sf::Event::JoystickConnected": "bind_Event",
-    "sf::Event::JoystickDisconnected": "bind_Event",
-    "sf::Event::TouchBegan": "bind_Event",
-    "sf::Event::TouchMoved": "bind_Event",
-    "sf::Event::TouchEnded": "bind_Event",
-    "sf::Event::SensorChanged": "bind_Event",
-    "sf::FloatRect": "bind_Rect",
-    "sf::IntRect": "bind_Rect",
-    "sf::Rect": "bind_Rect",
-    "sf::Rect<float>": "bind_Rect",
-    "sf::Rect<int>": "bind_Rect",
-    "sf::Vector2": "bind_Vector",
-    "sf::Vector2<bool>": "bind_Vector",
-    "sf::Vector2<float>": "bind_Vector",
-    "sf::Vector2<int>": "bind_Vector",
-    "sf::Vector2<unsigned int>": "bind_Vector",
-    "sf::Vector2b": "bind_Vector",
-    "sf::Vector2f": "bind_Vector",
-    "sf::Vector2i": "bind_Vector",
-    "sf::Vector2u": "bind_Vector",
-    "sf::Vector3": "bind_Vector",
-    "sf::Vector3<bool>": "bind_Vector",
-    "sf::Vector3<float>": "bind_Vector",
-    "sf::Vector3<int>": "bind_Vector",
-    "sf::Vector3<unsigned int>": "bind_Vector",
-    "sf::Vector3b": "bind_Vector",
-    "sf::Vector3f": "bind_Vector",
-    "sf::Vector3i": "bind_Vector",
-    "sf::Vector3u": "bind_Vector",
-    "sf::Glsl::Bvec2": "bind_Vector",
-    "sf::Glsl::Bvec3": "bind_Vector",
-    "sf::Glsl::Bvec4": "bind_Vector",
-    "sf::Glsl::Ivec2": "bind_Vector",
-    "sf::Glsl::Ivec3": "bind_Vector",
-    "sf::Glsl::Ivec4": "bind_Vector",
-    "sf::Glsl::Vec2": "bind_Vector",
-    "sf::Glsl::Vec3": "bind_Vector",
-    "sf::Glsl::Vec4": "bind_Vector",
-    "sf::priv::Vector4": "bind_Vector",
-    "sf::priv::Vector4<bool>": "bind_Vector",
-    "sf::priv::Vector4<float>": "bind_Vector",
-    "sf::priv::Vector4<int>": "bind_Vector",
-    "sf::Glsl::Mat3": "bind_Matrix",
-    "sf::Glsl::Mat4": "bind_Matrix",
-    "sf::priv::Matrix": "bind_Matrix",
-    "sf::priv::Matrix<3, 3>": "bind_Matrix",
-    "sf::priv::Matrix<4, 4>": "bind_Matrix",
-    "sf::WindowHandle": "bind_Handle",
+MANUAL_HEADER_OWNERS = {
+    "Drawable": "bind_Drawable",
+    "Event": "bind_Event",
+    "Rect": "bind_Rect",
+    "Vector2": "bind_Vector",
+    "Vector3": "bind_Vector",
     "WindowHandle": "bind_Handle",
+}
+
+MANUAL_HEADER_DECLARATION_PREFIX_OWNERS = {
+    "Glsl": {
+        "Vector": "bind_Vector",
+        "Matrix": "bind_Matrix",
+    },
 }
 
 
@@ -230,21 +176,247 @@ def walk_declarations(items: list[dict[str, Any]]):
         yield from walk_declarations(item.get("children", []))
 
 
-def build_type_owner_map(api: dict[str, Any], entries: dict[str, BindingEntry]) -> dict[str, str]:
-    owners: dict[str, str] = {
-        type_name: owner for type_name, owner in MANUAL_TYPE_OWNERS.items() if owner in entries
-    }
+def owner_for_header_stem(header_stem: str, entries: dict[str, BindingEntry]) -> str | None:
+    owner = MANUAL_HEADER_OWNERS.get(header_stem, f"bind_{header_stem}")
+    if owner in entries:
+        return owner
+    return None
+
+
+def owner_for_header_declaration(header_stem: str, type_name: str, entries: dict[str, BindingEntry]) -> str | None:
+    owner = owner_for_header_stem(header_stem, entries)
+    if owner:
+        return owner
+
+    for prefix, prefix_owner in MANUAL_HEADER_DECLARATION_PREFIX_OWNERS.get(header_stem, {}).items():
+        if type_name.startswith(prefix) and prefix_owner in entries:
+            return prefix_owner
+    return None
+
+
+def namespace_text(scopes: list[tuple[str, str]]) -> str:
+    names = [name for kind, name in scopes if kind in {"namespace", "type"} and name]
+    return "::".join(names)
+
+
+def qualify_name(name: str, scopes: list[tuple[str, str]]) -> str:
+    name = name.strip()
+    if name.startswith("::"):
+        return name[2:]
+    if "::" in name:
+        return name
+
+    current_namespace = namespace_text(scopes)
+    if current_namespace:
+        return f"{current_namespace}::{name}"
+    return name
+
+
+def add_type_owner(owners: dict[str, str], type_name: str, owner: str) -> None:
+    type_name = clean_cpp_type(type_name)
+    owners.setdefault(type_name, owner)
+    if type_name.count("::") == 1:
+        owners.setdefault(type_name.rsplit("::", 1)[1], owner)
+
+
+def qualified_type_candidates(type_text: str, scopes: list[tuple[str, str]]) -> list[str]:
+    type_text = clean_cpp_type(type_text)
+    if not type_text:
+        return []
+    if type_text.startswith("::"):
+        return [type_text[2:]]
+
+    candidates = [type_text]
+    if re.match(r"^[A-Za-z_]\w*(?:::|<|$)", type_text):
+        scope_names = [name for kind, name in scopes if kind == "namespace" and name]
+        for index in range(len(scope_names), 0, -1):
+            candidates.append(f"{'::'.join(scope_names[:index])}::{type_text}")
+
+    seen: set[str] = set()
+    return [candidate for candidate in candidates if not (candidate in seen or seen.add(candidate))]
+
+
+def strip_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return re.sub(r"//.*", "", text)
+
+
+def scan_header_type_owners(
+    header_path: Path,
+    entries: dict[str, BindingEntry],
+    owners: dict[str, str],
+    aliases: list[tuple[str, list[str]]],
+) -> None:
+    text = strip_comments(header_path.read_text(encoding="utf-8", errors="ignore"))
+    header_stem = header_path.stem
+    scopes: list[tuple[str, str]] = []
+    pending_scope: tuple[str, str] | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        consumed_opens = 0
+        if pending_scope and line.startswith("{"):
+            scopes.append(pending_scope)
+            pending_scope = None
+            consumed_opens += 1
+
+        namespace_match = re.match(r"namespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*\{", line)
+        if namespace_match:
+            scopes.append(("namespace", namespace_match.group(1)))
+            consumed_opens += 1
+        else:
+            namespace_match = re.match(r"namespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*$", line)
+            if namespace_match:
+                pending_scope = ("namespace", namespace_match.group(1))
+
+        alias_match = re.match(r"using\s+([A-Za-z_]\w*)\s*=\s*(.+);", line)
+        if alias_match:
+            alias_name = qualify_name(alias_match.group(1), scopes)
+            alias_owner = owner_for_header_declaration(header_stem, alias_match.group(1), entries)
+            if alias_owner:
+                add_type_owner(owners, alias_name, alias_owner)
+            else:
+                aliases.append((alias_name, qualified_type_candidates(alias_match.group(2), scopes)))
+
+        typedef_match = re.match(r"typedef\s+(.+?)\s+([A-Za-z_]\w*)\s*;", line)
+        if typedef_match:
+            alias_name = qualify_name(typedef_match.group(2), scopes)
+            alias_owner = owner_for_header_declaration(header_stem, typedef_match.group(2), entries)
+            if alias_owner:
+                add_type_owner(owners, alias_name, alias_owner)
+            else:
+                aliases.append((alias_name, qualified_type_candidates(typedef_match.group(1), scopes)))
+
+        type_match = re.match(
+            r"(?:template\s*<[^>]+>\s*)?(?:class|struct|enum(?:\s+class)?)\s+(?:[A-Z0-9_]+_API\s+)?([A-Za-z_]\w*)\b",
+            line,
+        )
+        if type_match:
+            type_name = type_match.group(1)
+            is_forward_declaration = line.endswith(";") and "{" not in line
+            if not is_forward_declaration:
+                qualified_name = qualify_name(type_name, scopes)
+                type_owner = owner_for_header_declaration(header_stem, type_name, entries)
+                if type_owner:
+                    add_type_owner(owners, qualified_name, type_owner)
+                if "{" in line:
+                    scopes.append(("type", type_name))
+                    consumed_opens += 1
+                else:
+                    pending_scope = ("type", type_name)
+
+        for _ in range(max(0, line.count("{") - consumed_opens)):
+            scopes.append(("other", ""))
+        for _ in range(line.count("}")):
+            if scopes:
+                scopes.pop()
+
+
+def resolve_alias_owners(owners: dict[str, str], aliases: list[tuple[str, list[str]]]) -> None:
+    changed = True
+    while changed:
+        changed = False
+        sorted_owners = sorted(owners.items(), key=lambda item: len(item[0]), reverse=True)
+        for alias_name, candidates in aliases:
+            if alias_name in owners:
+                continue
+            for candidate in candidates:
+                for type_name, owner in sorted_owners:
+                    if contains_type(candidate, type_name):
+                        add_type_owner(owners, alias_name, owner)
+                        changed = True
+                        break
+                if alias_name in owners:
+                    break
+
+
+def api_include_roots(api: dict[str, Any], project_root: Path) -> list[Path]:
+    roots: set[Path] = set()
+    for file_item in api.get("files", []):
+        parts = Path(file_item["path"]).parts
+        if "include" not in parts:
+            continue
+        include_index = parts.index("include")
+        roots.add((project_root / Path(*parts[: include_index + 1])).resolve())
+
+    third_party_root = project_root / "third_party"
+    if third_party_root.exists():
+        for path in third_party_root.glob("*/include"):
+            if path.is_dir():
+                roots.add(path.resolve())
+
+    return sorted(roots)
+
+
+def resolve_public_include(include_path: str, include_roots: list[Path]) -> Path | None:
+    for include_root in include_roots:
+        candidate = include_root / include_path
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def collect_headers_to_scan(api: dict[str, Any], project_root: Path) -> list[Path]:
+    include_roots = api_include_roots(api, project_root)
+    queue: list[Path] = []
+
+    for file_item in api.get("files", []):
+        path = project_root / file_item["path"]
+        if path.exists():
+            queue.append(path.resolve())
+
+    queue.extend(path.resolve() for path in sorted((project_root / "include").glob("bind_*.hpp")))
+
+    seen: set[Path] = set()
+    headers: list[Path] = []
+    while queue:
+        header = queue.pop(0)
+        if header in seen or header.suffix not in {".hpp", ".inl"}:
+            continue
+        seen.add(header)
+        headers.append(header)
+
+        text = header.read_text(encoding="utf-8", errors="ignore")
+        for include_path in INCLUDE_RE.findall(text):
+            resolved = resolve_public_include(include_path, include_roots)
+            if resolved and resolved not in seen:
+                queue.append(resolved)
+
+    return headers
+
+
+def scan_public_header_type_owners(api: dict[str, Any], project_root: Path, entries: dict[str, BindingEntry], owners: dict[str, str]) -> None:
+    headers = collect_headers_to_scan(api, project_root)
+    if not headers:
+        return
+
+    aliases: list[tuple[str, list[str]]] = []
+    for header in headers:
+        scan_header_type_owners(header, entries, owners, aliases)
+    resolve_alias_owners(owners, aliases)
+
+
+def build_type_owner_map(api: dict[str, Any], entries: dict[str, BindingEntry], project_root: Path) -> dict[str, str]:
+    owners: dict[str, str] = {}
 
     for file_item in api.get("files", []):
         name = f"bind_{Path(file_item['path']).stem}"
         if name not in entries:
+            continue
+        header_owner = owner_for_header_stem(Path(file_item["path"]).stem, entries)
+        if not header_owner:
             continue
         for item in walk_declarations(file_item.get("declarations", [])):
             if item.get("kind") not in TYPE_DECL_KINDS:
                 continue
             qualified_name = item.get("qualified_name") or item.get("name")
             if qualified_name:
-                owners.setdefault(clean_cpp_type(qualified_name), name)
+                add_type_owner(owners, qualified_name, header_owner)
+
+    scan_public_header_type_owners(api, project_root, entries, owners)
 
     return owners
 
@@ -418,14 +590,21 @@ def save_cached_order(
     )
 
 
-def sorted_order(api_path: Path, cache_path: Path, api: dict[str, Any], entries: dict[str, BindingEntry], force_sort: bool) -> tuple[list[str], bool]:
+def sorted_order(
+    project_root: Path,
+    api_path: Path,
+    cache_path: Path,
+    api: dict[str, Any],
+    entries: dict[str, BindingEntry],
+    force_sort: bool,
+) -> tuple[list[str], bool]:
     digest = input_hash(api_path, entries)
     if not force_sort:
         cached = load_cached_order(cache_path, digest, entries)
         if cached is not None:
             return cached, True
 
-    owners = build_type_owner_map(api, entries)
+    owners = build_type_owner_map(api, entries, project_root)
     graph = build_dependency_graph(api, entries, owners)
     order, cycle_breaks = topological_sort(entries, graph)
     save_cached_order(cache_path, digest, order, graph, cycle_breaks)
@@ -549,7 +728,7 @@ def main() -> int:
     if args.copy_dependencies:
         copy_dependencies(project_root, output_root)
     entries = discover_entries(api, project_root, output_root)
-    order, used_cache = sorted_order(api_path, cache_path, api, entries, args.force_sort)
+    order, used_cache = sorted_order(project_root, api_path, cache_path, api, entries, args.force_sort)
     render_outputs(
         cmake_project_root=output_root,
         order=order,
