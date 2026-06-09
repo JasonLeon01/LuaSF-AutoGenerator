@@ -16,11 +16,14 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -87,8 +90,59 @@ sol::object optional_to_object(sol::state_view lua, const std::optional<T>& valu
 template <typename T>
 sol::object optional_to_object(sol::state_view lua, std::optional<T>&& value);
 
+sol::table audioFramesToTable(sol::state_view lua,
+                              const float* frames,
+                              unsigned int frameCount,
+                              unsigned int frameChannelCount);
+
+void copyAudioFramesFromObject(const sol::object& object,
+                               float* frames,
+                               unsigned int frameCount,
+                               unsigned int frameChannelCount);
+
+void updateAudioFrameCount(const sol::object& object, unsigned int& frameCount, unsigned int frameCapacity);
+
 template <typename Signature>
 std::function<Signature> function_from_object(const sol::object& object);
+
+using LongLivedMemoryBuffer = std::shared_ptr<std::vector<std::byte>>;
+using LongLivedStreamObject = sol::object;
+
+LongLivedMemoryBuffer makeLongLivedMemoryBuffer(const sol::object& object);
+
+void rememberLongLivedMemory(const void* owner, LongLivedMemoryBuffer buffer);
+
+void releaseLongLivedMemory(const void* owner);
+
+void rememberLongLivedStream(const void* owner, LongLivedStreamObject stream);
+
+void releaseLongLivedStream(const void* owner);
+
+void releaseLongLivedResources(const void* owner);
+
+template <typename T>
+void rememberLongLivedMemory(const T& owner, LongLivedMemoryBuffer buffer);
+
+template <typename T>
+void releaseLongLivedMemory(const T& owner);
+
+template <typename T>
+void rememberLongLivedStream(const T& owner, LongLivedStreamObject stream);
+
+template <typename T>
+void releaseLongLivedStream(const T& owner);
+
+template <typename T>
+void releaseLongLivedResources(const T& owner);
+
+template <typename T>
+struct LongLivedMemoryDeleter
+{
+    void operator()(T* object) const noexcept;
+};
+
+template <typename T, typename... Args>
+std::unique_ptr<T, LongLivedMemoryDeleter<T>> makeLongLivedMemoryObject(Args&&... args);
 
 } // namespace lua_sf
 

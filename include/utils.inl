@@ -29,6 +29,127 @@ inline void throw_on_lua_error(const sol::protected_function_result& result)
     throw std::runtime_error(error.what());
 }
 
+inline std::unordered_map<const void*, LongLivedMemoryBuffer>& longLivedMemoryStore()
+{
+    static std::unordered_map<const void*, LongLivedMemoryBuffer> store;
+    return store;
+}
+
+inline std::mutex& longLivedMemoryStoreMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+inline std::unordered_map<const void*, LongLivedStreamObject>& longLivedStreamStore()
+{
+    static std::unordered_map<const void*, LongLivedStreamObject> store;
+    return store;
+}
+
+inline std::mutex& longLivedStreamStoreMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+inline LongLivedMemoryBuffer makeLongLivedMemoryBuffer(const sol::object& object)
+{
+    return std::make_shared<std::vector<std::byte>>(array_from_object<std::byte>(object));
+}
+
+inline void rememberLongLivedMemory(const void* owner, LongLivedMemoryBuffer buffer)
+{
+    if (!owner)
+        return;
+
+    std::lock_guard<std::mutex> lock(longLivedMemoryStoreMutex());
+    if (buffer)
+        longLivedMemoryStore()[owner] = std::move(buffer);
+    else
+        longLivedMemoryStore().erase(owner);
+}
+
+inline void releaseLongLivedMemory(const void* owner)
+{
+    if (!owner)
+        return;
+
+    std::lock_guard<std::mutex> lock(longLivedMemoryStoreMutex());
+    longLivedMemoryStore().erase(owner);
+}
+
+inline void rememberLongLivedStream(const void* owner, LongLivedStreamObject stream)
+{
+    if (!owner)
+        return;
+
+    std::lock_guard<std::mutex> lock(longLivedStreamStoreMutex());
+    if (stream.valid())
+        longLivedStreamStore().insert_or_assign(owner, std::move(stream));
+    else
+        longLivedStreamStore().erase(owner);
+}
+
+inline void releaseLongLivedStream(const void* owner)
+{
+    if (!owner)
+        return;
+
+    std::lock_guard<std::mutex> lock(longLivedStreamStoreMutex());
+    longLivedStreamStore().erase(owner);
+}
+
+inline void releaseLongLivedResources(const void* owner)
+{
+    releaseLongLivedMemory(owner);
+    releaseLongLivedStream(owner);
+}
+
+template <typename T>
+void rememberLongLivedMemory(const T& owner, LongLivedMemoryBuffer buffer)
+{
+    rememberLongLivedMemory(static_cast<const void*>(&owner), std::move(buffer));
+}
+
+template <typename T>
+void releaseLongLivedMemory(const T& owner)
+{
+    releaseLongLivedMemory(static_cast<const void*>(&owner));
+}
+
+template <typename T>
+void rememberLongLivedStream(const T& owner, LongLivedStreamObject stream)
+{
+    rememberLongLivedStream(static_cast<const void*>(&owner), std::move(stream));
+}
+
+template <typename T>
+void releaseLongLivedStream(const T& owner)
+{
+    releaseLongLivedStream(static_cast<const void*>(&owner));
+}
+
+template <typename T>
+void releaseLongLivedResources(const T& owner)
+{
+    releaseLongLivedResources(static_cast<const void*>(&owner));
+}
+
+template <typename T>
+void LongLivedMemoryDeleter<T>::operator()(T* object) const noexcept
+{
+    releaseLongLivedResources(static_cast<const void*>(object));
+    delete object;
+}
+
+template <typename T, typename... Args>
+std::unique_ptr<T, LongLivedMemoryDeleter<T>> makeLongLivedMemoryObject(Args&&... args)
+{
+    return std::unique_ptr<T, LongLivedMemoryDeleter<T>>(
+        new T(std::forward<Args>(args)...));
+}
+
 template <typename T>
 T object_as(const sol::object& object)
 {
@@ -181,6 +302,77 @@ sol::object optional_to_object(sol::state_view lua, std::optional<std::vector<T,
     return vector_to_object(lua, *value);
 }
 
+inline sol::table audioFramesToTable(sol::state_view lua,
+                                     const float* frames,
+                                     unsigned int frameCount,
+                                     unsigned int frameChannelCount)
+{
+    sol::table result = lua.create_table(static_cast<int>(frameCount), 0);
+    if (!frames || frameCount == 0 || frameChannelCount == 0)
+        return result;
+
+    for (unsigned int frame = 0; frame < frameCount; ++frame)
+    {
+        sol::table row = lua.create_table(static_cast<int>(frameChannelCount), 0);
+        for (unsigned int channel = 0; channel < frameChannelCount; ++channel)
+            row[static_cast<int>(channel + 1)] = frames[static_cast<std::size_t>(frame) * frameChannelCount + channel];
+        result[static_cast<int>(frame + 1)] = row;
+    }
+
+    return result;
+}
+
+inline void copyAudioFramesFromObject(const sol::object& object,
+                                      float* frames,
+                                      unsigned int frameCount,
+                                      unsigned int frameChannelCount)
+{
+    if (!frames || frameCount == 0 || frameChannelCount == 0 || is_nil_object(object))
+        return;
+
+    const std::size_t maxSampleCount = static_cast<std::size_t>(frameCount) * frameChannelCount;
+    if (object.get_type() != sol::type::table)
+    {
+        const auto values = object.as<std::vector<float>>();
+        const std::size_t copyCount = std::min(values.size(), maxSampleCount);
+        std::copy_n(values.begin(), copyCount, frames);
+        return;
+    }
+
+    const sol::table table = object.as<sol::table>();
+    const sol::object firstValue = table[1];
+    if (firstValue.get_type() != sol::type::table)
+    {
+        const auto values = table.as<std::vector<float>>();
+        const std::size_t copyCount = std::min(values.size(), maxSampleCount);
+        std::copy_n(values.begin(), copyCount, frames);
+        return;
+    }
+
+    for (unsigned int frame = 0; frame < frameCount; ++frame)
+    {
+        const sol::object rowValue = table[static_cast<int>(frame + 1)];
+        if (is_nil_object(rowValue))
+            break;
+
+        const sol::table row = rowValue.as<sol::table>();
+        for (unsigned int channel = 0; channel < frameChannelCount; ++channel)
+        {
+            const sol::object sampleValue = row[static_cast<int>(channel + 1)];
+            if (!is_nil_object(sampleValue))
+                frames[static_cast<std::size_t>(frame) * frameChannelCount + channel] = sampleValue.as<float>();
+        }
+    }
+}
+
+inline void updateAudioFrameCount(const sol::object& object, unsigned int& frameCount, unsigned int frameCapacity)
+{
+    if (is_nil_object(object))
+        return;
+
+    frameCount = std::min(object.as<unsigned int>(), frameCapacity);
+}
+
 template <typename Signature>
 struct function_converter;
 
@@ -217,47 +409,48 @@ struct function_converter<void(const float*, unsigned int&, float*, unsigned int
                                                 float* outputFrames,
                                                 unsigned int& outputFrameCount,
                                                 unsigned int frameChannelCount) mutable {
-            const std::size_t inputSize = static_cast<std::size_t>(inputFrameCount) * frameChannelCount;
-            const std::size_t outputSize = static_cast<std::size_t>(outputFrameCount) * frameChannelCount;
-            std::vector<float> input;
-            std::vector<float> output;
-            if (inputFrames && inputSize != 0)
-                input.assign(inputFrames, inputFrames + inputSize);
-            if (outputFrames && outputSize != 0)
-                output.assign(outputFrames, outputFrames + outputSize);
+            sol::state_view lua(callback.lua_state());
+            const unsigned int inputFrameCapacity = inputFrameCount;
+            const unsigned int outputFrameCapacity = outputFrameCount;
+            sol::table input = audioFramesToTable(lua, inputFrames, inputFrameCount, frameChannelCount);
+            sol::table output = audioFramesToTable(lua, outputFrames, outputFrameCount, frameChannelCount);
 
             sol::protected_function_result result = callback(
-                sol::as_table(input),
+                input,
                 inputFrameCount,
-                sol::as_table(output),
+                output,
                 outputFrameCount,
                 frameChannelCount);
             throw_on_lua_error(result);
 
+            sol::object outputValue = output;
             const sol::object returned = result;
-            if (is_nil_object(returned))
-                return;
-
-            std::vector<float> returnedOutput;
-            if (returned.get_type() == sol::type::table)
+            if (!is_nil_object(returned))
             {
-                const sol::table table = returned.as<sol::table>();
-                sol::object outputValue = table["output"];
-                if (is_nil_object(outputValue))
-                    outputValue = table;
-                returnedOutput = outputValue.as<std::vector<float>>();
+                if (returned.get_type() == sol::type::table)
+                {
+                    const sol::table table = returned.as<sol::table>();
+                    const sol::object inputCountValue = table["inputFrameCount"];
+                    const sol::object outputCountValue = table["outputFrameCount"];
+                    const sol::object returnedOutputValue = table["output"];
+                    updateAudioFrameCount(inputCountValue, inputFrameCount, inputFrameCapacity);
+                    updateAudioFrameCount(outputCountValue, outputFrameCount, outputFrameCapacity);
 
-                const sol::object countValue = table["outputFrameCount"];
-                if (!is_nil_object(countValue))
-                    outputFrameCount = countValue.as<unsigned int>();
-            }
-            else
-            {
-                returnedOutput = returned.as<std::vector<float>>();
+                    const bool hasNamedReturn = !is_nil_object(inputCountValue)
+                        || !is_nil_object(outputCountValue)
+                        || !is_nil_object(returnedOutputValue);
+                    if (!is_nil_object(returnedOutputValue))
+                        outputValue = returnedOutputValue;
+                    else if (!hasNamedReturn)
+                        outputValue = returned;
+                }
+                else if (returned.get_type() == sol::type::number)
+                {
+                    updateAudioFrameCount(returned, outputFrameCount, outputFrameCapacity);
+                }
             }
 
-            const std::size_t copyCount = std::min<std::size_t>(returnedOutput.size(), outputSize);
-            std::copy_n(returnedOutput.begin(), copyCount, outputFrames);
+            copyAudioFramesFromObject(outputValue, outputFrames, outputFrameCount, frameChannelCount);
         };
     }
 };

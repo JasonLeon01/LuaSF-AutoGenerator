@@ -75,11 +75,85 @@ OUTPUT_REF_FUNCTIONS = {
     "accept",
     "receive",
 }
+OUTPUT_ARRAY_COUNT_REF_NAMES = {
+    "received",
+}
 SPECIAL_POINTER_RETURNS = {
     "sf::Transform::getMatrix": ("float", "16"),
     "sf::Image::getPixelsPtr": ("std::uint8_t", "self.getSize().x * self.getSize().y * 4"),
     "sf::SoundBuffer::getSamples": ("std::int16_t", "self.getSampleCount()"),
 }
+AUDIO_EFFECT_PROCESSOR_SIGNATURE = "void(const float*, unsigned int&, float*, unsigned int&, unsigned int)"
+AUDIO_EFFECT_PROCESSOR_LUA_TYPE = (
+    "fun(inputFrames: number[][], inputFrameCount: integer, "
+    "outputFrames: number[][], outputFrameCount: integer, frameChannelCount: integer): integer|table|nil"
+)
+LONG_LIVED_MEMORY_TYPES = {
+    "sf::Font",
+    "sf::InputSoundFile",
+    "sf::MemoryInputStream",
+    "sf::Music",
+}
+LONG_LIVED_STREAM_TYPES = {
+    "sf::Font",
+    "sf::InputSoundFile",
+    "sf::Music",
+}
+LONG_LIVED_RESOURCE_RESET_METHODS = {
+    "close",
+    "openFromFile",
+    "openFromStream",
+}
+SHADER_UNIFORM_ARRAY_BINDINGS = (
+    {
+        "method": "setUniformFloatArray",
+        "local": "setUniformFloatArray",
+        "cpp": "float",
+        "lua": "number[]",
+        "param": "scalarArray",
+        "check": "first.get_type() == sol::type::number",
+    },
+    {
+        "method": "setUniformVec2Array",
+        "local": "setUniformVec2Array",
+        "cpp": "sf::Vector2<float>",
+        "lua": "sf.Vector2f[]",
+        "param": "vectorArray",
+        "check": "first.is<sf::Vector2<float>>()",
+    },
+    {
+        "method": "setUniformVec3Array",
+        "local": "setUniformVec3Array",
+        "cpp": "sf::Vector3<float>",
+        "lua": "sf.Vector3f[]",
+        "param": "vectorArray",
+        "check": "first.is<sf::Vector3<float>>()",
+    },
+    {
+        "method": "setUniformVec4Array",
+        "local": "setUniformVec4Array",
+        "cpp": "sf::priv::Vector4<float>",
+        "lua": "sf.Vector4f[]",
+        "param": "vectorArray",
+        "check": "first.is<sf::priv::Vector4<float>>()",
+    },
+    {
+        "method": "setUniformMat3Array",
+        "local": "setUniformMat3Array",
+        "cpp": "sf::priv::Matrix<3, 3>",
+        "lua": "sf.Mat3[]",
+        "param": "matrixArray",
+        "check": "first.is<sf::priv::Matrix<3, 3>>()",
+    },
+    {
+        "method": "setUniformMat4Array",
+        "local": "setUniformMat4Array",
+        "cpp": "sf::priv::Matrix<4, 4>",
+        "lua": "sf.Mat4[]",
+        "param": "matrixArray",
+        "check": "first.is<sf::priv::Matrix<4, 4>>()",
+    },
+)
 TYPE_DECL_KINDS = {"CLASS_DECL", "STRUCT_DECL", "ENUM_DECL", "TYPEDEF_DECL", "TYPE_ALIAS_DECL"}
 LUA_KEYWORDS = {
     "and",
@@ -192,11 +266,19 @@ class TypeRef:
 
 
 @dataclass
+class OutputArray:
+    buffer_name: str
+
+
+@dataclass
 class PlannedCall:
     lua_params: list[str] = field(default_factory=list)
     prelude: list[str] = field(default_factory=list)
     call_args: list[str] = field(default_factory=list)
     post_values: list[str] = field(default_factory=list)
+    output_arrays: list[OutputArray] = field(default_factory=list)
+    output_count_values: list[str] = field(default_factory=list)
+    stub_param_types: dict[str, str] = field(default_factory=dict)
     signature_key: tuple[str, ...] = field(default_factory=tuple)
     unsupported: str | None = None
 
@@ -385,6 +467,13 @@ def is_std_function(type_ref: TypeRef) -> bool:
     return std_function_signature(type_ref) is not None
 
 
+def std_function_lua_type(type_ref: TypeRef) -> str:
+    signature = std_function_signature(type_ref)
+    if signature == AUDIO_EFFECT_PROCESSOR_SIGNATURE:
+        return AUDIO_EFFECT_PROCESSOR_LUA_TYPE
+    return "fun(...): any"
+
+
 def is_window_handle(type_ref: TypeRef) -> bool:
     source = remove_cvref(type_ref.source)
     return source in {"WindowHandle", "sf::WindowHandle"}
@@ -421,6 +510,50 @@ def can_be_array_pointer(type_ref: TypeRef, next_param: dict[str, Any] | None) -
     if element in NUMERIC_ARRAY_TYPES or element in BYTE_TYPES:
         return True
     return next_param is not None and is_size_type(TypeRef.from_json(next_param.get("type")))
+
+
+def long_lived_memory_param_info(params: list[dict[str, Any]]) -> tuple[str, str] | None:
+    if len(params) < 2:
+        return None
+
+    pointer_param = params[0]
+    size_param = params[1]
+    pointer_type = TypeRef.from_json(pointer_param.get("type"))
+    size_type = TypeRef.from_json(size_param.get("type"))
+    if not is_pointer(pointer_type.cpp) or not is_size_type(size_type):
+        return None
+    if normalize_array_element(pointer_type.cpp) not in BYTE_TYPES:
+        return None
+
+    return sanitize_identifier(pointer_param.get("name") or "data"), size_type.cpp
+
+
+def is_long_lived_memory_type(owner_type: str | None) -> bool:
+    return clean_cpp_type(owner_type or "") in LONG_LIVED_MEMORY_TYPES
+
+
+def is_long_lived_memory_signature(owner_type: str | None, params: list[dict[str, Any]]) -> bool:
+    return is_long_lived_memory_type(owner_type) and long_lived_memory_param_info(params) is not None
+
+
+def long_lived_stream_param_info(params: list[dict[str, Any]]) -> str | None:
+    if len(params) != 1:
+        return None
+
+    param = params[0]
+    type_ref = TypeRef.from_json(param.get("type"))
+    if not is_reference(type_ref.cpp) or remove_cvref(type_ref.cpp) != "sf::InputStream":
+        return None
+
+    return sanitize_identifier(param.get("name") or "stream")
+
+
+def is_long_lived_stream_type(owner_type: str | None) -> bool:
+    return clean_cpp_type(owner_type or "") in LONG_LIVED_STREAM_TYPES
+
+
+def is_long_lived_stream_signature(owner_type: str | None, params: list[dict[str, Any]]) -> bool:
+    return is_long_lived_stream_type(owner_type) and long_lived_stream_param_info(params) is not None
 
 
 def should_skip_type(type_ref: TypeRef, is_return: bool = False) -> str | None:
@@ -552,7 +685,7 @@ def result_value_expr(type_ref: TypeRef, expr: str, function_name: str | None = 
     if vector_element(cpp):
         return [], f"lua_sf::vector_to_object(lua, {expr})"
     if optional_element(cpp):
-        return [], f"lua_sf::optional_to_object(lua, {expr})"
+        return [f"auto result = {expr};"], "lua_sf::optional_to_object(lua, result)"
     if is_char_pointer(cpp):
         return [
             f"const auto* result_ptr = {expr};",
@@ -562,6 +695,51 @@ def result_value_expr(type_ref: TypeRef, expr: str, function_name: str | None = 
         wrapper = "std::cref" if is_const_type(cpp) else "std::ref"
         return [], f"{wrapper}({expr})"
     return [f"auto result = {expr};"], "result"
+
+
+def is_integer_count_type(value: str) -> bool:
+    return remove_cvref(value) in INTEGER_TYPES
+
+
+def optional_integer_count_element(value: str) -> str | None:
+    element = optional_element(value)
+    if element and is_integer_count_type(element):
+        return element
+    return None
+
+
+def output_array_resize_lines(plan: PlannedCall, return_type: TypeRef) -> list[str]:
+    if not plan.output_arrays:
+        return []
+
+    if is_integer_count_type(return_type.cpp):
+        return output_array_resize_lines_for_count(plan, "result")
+
+    if optional_integer_count_element(return_type.cpp):
+        lines = ["if (result)", "{"]
+        lines.extend(f"    {line}" for line in output_array_resize_lines_for_count(plan, "*result"))
+        lines.append("}")
+        lines.append("else")
+        lines.append("{")
+        for output in plan.output_arrays:
+            lines.append(f"    {output.buffer_name}.clear();")
+        lines.append("}")
+        return lines
+
+    if plan.output_count_values:
+        return output_array_resize_lines_for_count(plan, plan.output_count_values[0])
+
+    return []
+
+
+def output_array_resize_lines_for_count(plan: PlannedCall, count_expr: str) -> list[str]:
+    lines: list[str] = []
+    for output in plan.output_arrays:
+        count_name = f"{output.buffer_name}_written"
+        lines.append(f"const auto {count_name} = static_cast<std::size_t>({count_expr});")
+        lines.append(f"if ({count_name} < {output.buffer_name}.size())")
+        lines.append(f"    {output.buffer_name}.resize({count_name});")
+    return lines
 
 
 def sanitize_identifier(value: str) -> str:
@@ -661,9 +839,9 @@ def cpp_type_to_lua_type(value: str) -> str:
     if is_window_handle(TypeRef(spelling=base, canonical=base)):
         return "integer"
 
-    signature = std_function_signature(TypeRef(spelling=value, canonical=value))
-    if signature:
-        return "fun(...): any"
+    type_ref = TypeRef(spelling=value, canonical=value)
+    if std_function_signature(type_ref):
+        return std_function_lua_type(type_ref)
 
     vec_elem = vector_element(base)
     if vec_elem:
@@ -682,6 +860,14 @@ def cpp_type_to_lua_type(value: str) -> str:
     if base.startswith("sf::"):
         return lua_path_for_type(base)
     return "any"
+
+
+def special_pointer_return_lua_type(function_name: str | None) -> str | None:
+    if not function_name or function_name not in SPECIAL_POINTER_RETURNS:
+        return None
+
+    element, _count_expr = SPECIAL_POINTER_RETURNS[function_name]
+    return f"{cpp_type_to_lua_type(element)}[]"
 
 
 def type_ref_to_lua_type(type_ref: TypeRef) -> str:
@@ -706,13 +892,23 @@ def stub_signature_for_item(
     if plan.unsupported:
         return None
 
-    stub_params = tuple(split_planned_lua_param(param) for param in plan.lua_params)
+    stub_params_list: list[StubParam] = []
+    for param in plan.lua_params:
+        stub_param = split_planned_lua_param(param)
+        override = plan.stub_param_types.get(stub_param.name)
+        if override:
+            stub_param = StubParam(stub_param.name, override)
+        stub_params_list.append(stub_param)
+    stub_params = tuple(stub_params_list)
     if constructor_return:
         return StubSignature(stub_params, (constructor_return,))
 
     returns: list[str] = []
     return_type = TypeRef.from_json(item.get("return_type"))
-    if return_type.cpp and remove_cvref(return_type.cpp) != "void":
+    special_pointer_lua_type = special_pointer_return_lua_type(item.get("qualified_name"))
+    if special_pointer_lua_type:
+        returns.append(special_pointer_lua_type)
+    elif return_type.cpp and remove_cvref(return_type.cpp) != "void":
         returns.append(type_ref_to_lua_type(return_type))
     returns.extend("any" for _ in plan.post_values)
     return StubSignature(stub_params, tuple(returns))
@@ -852,6 +1048,8 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
             plan.prelude.append(f"{local_type} {name}{{}};")
             plan.call_args.append(name)
             plan.post_values.append(f"std::move({name})")
+            if name in OUTPUT_ARRAY_COUNT_REF_NAMES and local_type in INTEGER_TYPES:
+                plan.output_count_values.append(name)
             continue
 
         if is_pointer(cpp) and can_be_array_pointer(type_ref, next_param):
@@ -869,11 +1067,14 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
                     skip_next.add(index + 1)
                 continue
 
-            lua_size_name = f"{name}_count"
+            lua_size_name = sanitize_identifier(next_param.get("name") or "") if has_size_pair and next_param else ""
+            if not lua_size_name:
+                lua_size_name = f"{name}Count"
             plan.lua_params.append(f"std::size_t {lua_size_name}")
             plan.prelude.append(f"std::vector<{element}> {name}_buffer({lua_size_name});")
             plan.call_args.append(f"{name}_buffer.data()")
             plan.post_values.append(f"sol::as_table({name}_buffer)")
+            plan.output_arrays.append(OutputArray(f"{name}_buffer"))
             plan.signature_key += (f"outarray:{element}",)
             if has_size_pair:
                 size_type = TypeRef.from_json(next_param.get("type")).cpp
@@ -896,6 +1097,8 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
         plan.lua_params.append(f"{lua_type} {name}")
         plan.prelude.extend(prelude)
         plan.call_args.append(expr)
+        if is_std_function(type_ref):
+            plan.stub_param_types[sanitize_lua_identifier(name)] = std_function_lua_type(type_ref)
         plan.signature_key += (lua_type,)
 
     return plan
@@ -926,9 +1129,14 @@ def make_lambda(
     lines: list[str] = []
 
     if is_constructor:
+        if is_long_lived_memory_signature(owner_type, params):
+            return long_lived_memory_constructor_lambda(owner_type or "", params, plan), None
+        if is_long_lived_stream_signature(owner_type, params):
+            return long_lived_stream_constructor_lambda(owner_type or "", params), None
         lines.append(f"{capture}({lua_args}) {{")
         lines.extend(f"    {line}" for line in plan.prelude)
-        lines.append(f"    return std::make_unique<{owner_type}>({', '.join(plan.call_args)});")
+        factory = "lua_sf::makeLongLivedMemoryObject" if is_long_lived_memory_type(owner_type) else "std::make_unique"
+        lines.append(f"    return {factory}<{owner_type}>({', '.join(plan.call_args)});")
         lines.append("}")
         return "\n".join(lines), None
 
@@ -943,6 +1151,29 @@ def make_lambda(
     if owner_type is None:
         call_target = call_name
     call_expr = f"{call_target}({', '.join(plan.call_args)})"
+
+    if (
+        owner_type
+        and is_long_lived_memory_signature(owner_type, params)
+        and call_name == "openFromMemory"
+    ):
+        return long_lived_memory_open_lambda(owner_type, params, plan, call_target), None
+
+    if (
+        owner_type
+        and is_long_lived_stream_signature(owner_type, params)
+        and call_name == "openFromStream"
+    ):
+        return long_lived_stream_open_lambda(owner_type, params, call_target), None
+
+    if (
+        owner_type
+        and is_long_lived_memory_type(owner_type)
+        and call_name in LONG_LIVED_RESOURCE_RESET_METHODS
+    ):
+        lambda_code = long_lived_memory_reset_lambda(owner_type, plan, call_expr, return_type)
+        if lambda_code:
+            return lambda_code, None
 
     if plan.post_values:
         trailing_return = ""
@@ -973,11 +1204,13 @@ def make_lambda(
 
     if return_type.cpp == "void" or not return_type.cpp:
         lines.append(f"    {call_expr};")
+        lines.extend(f"    {line}" for line in output_array_resize_lines(plan, return_type))
         if plan.post_values:
             lines.append(f"    return std::make_tuple({', '.join(plan.post_values)});")
     elif plan.post_values:
         result_lines, result_expr = result_value_expr(return_type, call_expr, item.get("qualified_name"))
         lines.extend(f"    {line}" for line in result_lines)
+        lines.extend(f"    {line}" for line in output_array_resize_lines(plan, return_type))
         values = [result_expr, *plan.post_values]
         lines.append(f"    return std::make_tuple({', '.join(values)});")
     else:
@@ -1016,6 +1249,200 @@ def append_indented_block(lines: list[str], text: str, indent: str, suffix: str 
     for index, line in enumerate(block):
         line_suffix = suffix if index + 1 == len(block) else ""
         lines.append(f"{indent}{line}{line_suffix}")
+
+
+def long_lived_memory_constructor_lambda(owner_type: str, params: list[dict[str, Any]], plan: PlannedCall) -> str:
+    info = long_lived_memory_param_info(params)
+    if info is None:
+        raise ValueError("long-lived memory constructor requires a byte pointer and size parameter")
+    data_name, size_type = info
+    lua_args = ", ".join(plan.lua_params)
+    lines = [
+        f"[]({lua_args}) {{",
+        f"    auto {data_name}_buffer = lua_sf::makeLongLivedMemoryBuffer({data_name});",
+    ]
+    if clean_cpp_type(owner_type) == "sf::MemoryInputStream":
+        lines.extend(
+            [
+                f"    auto object = lua_sf::makeLongLivedMemoryObject<{owner_type}>(",
+                f"        {data_name}_buffer->data(),",
+                f"        static_cast<{size_type}>({data_name}_buffer->size()));",
+                f"    lua_sf::rememberLongLivedMemory(*object, std::move({data_name}_buffer));",
+                "    return object;",
+                "}",
+            ]
+        )
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            f"    auto object = lua_sf::makeLongLivedMemoryObject<{owner_type}>();",
+            f"    if (!object->openFromMemory({data_name}_buffer->data(), static_cast<{size_type}>({data_name}_buffer->size())))",
+            f'        throw std::runtime_error("Failed to open {lua_path_for_type(owner_type)} from memory");',
+            f"    lua_sf::rememberLongLivedMemory(*object, std::move({data_name}_buffer));",
+            "    return object;",
+            "}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def long_lived_memory_open_lambda(
+    owner_type: str,
+    params: list[dict[str, Any]],
+    plan: PlannedCall,
+    call_target: str,
+) -> str:
+    info = long_lived_memory_param_info(params)
+    if info is None:
+        raise ValueError("long-lived memory open requires a byte pointer and size parameter")
+    data_name, size_type = info
+    lua_args = ", ".join(plan.lua_params)
+    if owner_type:
+        lua_args = f"{owner_type}& self" + (f", {lua_args}" if lua_args else "")
+    return "\n".join(
+        [
+            f"[]({lua_args}) -> bool {{",
+            f"    auto {data_name}_buffer = lua_sf::makeLongLivedMemoryBuffer({data_name});",
+            f"    const bool result = {call_target}({data_name}_buffer->data(), static_cast<{size_type}>({data_name}_buffer->size()));",
+            "    if (result)",
+            "    {",
+            "        lua_sf::releaseLongLivedStream(self);",
+            f"        lua_sf::rememberLongLivedMemory(self, std::move({data_name}_buffer));",
+            "    }",
+            "    return result;",
+            "}",
+        ]
+    )
+
+
+def long_lived_stream_constructor_lambda(owner_type: str, params: list[dict[str, Any]]) -> str:
+    stream_name = long_lived_stream_param_info(params)
+    if stream_name is None:
+        raise ValueError("long-lived stream constructor requires an sf::InputStream reference")
+    return "\n".join(
+        [
+            f"[](sol::object {stream_name}) {{",
+            f"    auto& {stream_name}_ref = {stream_name}.as<sf::InputStream&>();",
+            f"    auto object = lua_sf::makeLongLivedMemoryObject<{owner_type}>({stream_name}_ref);",
+            f"    lua_sf::rememberLongLivedStream(*object, std::move({stream_name}));",
+            "    return object;",
+            "}",
+        ]
+    )
+
+
+def long_lived_stream_open_lambda(owner_type: str, params: list[dict[str, Any]], call_target: str) -> str:
+    stream_name = long_lived_stream_param_info(params)
+    if stream_name is None:
+        raise ValueError("long-lived stream open requires an sf::InputStream reference")
+    return "\n".join(
+        [
+            f"[]({owner_type}& self, sol::object {stream_name}) -> bool {{",
+            f"    auto& {stream_name}_ref = {stream_name}.as<sf::InputStream&>();",
+            f"    const bool result = {call_target}({stream_name}_ref);",
+            "    if (result)",
+            "    {",
+            "        lua_sf::releaseLongLivedMemory(self);",
+            f"        lua_sf::rememberLongLivedStream(self, std::move({stream_name}));",
+            "    }",
+            "    return result;",
+            "}",
+        ]
+    )
+
+
+def long_lived_memory_reset_lambda(
+    owner_type: str,
+    plan: PlannedCall,
+    call_expr: str,
+    return_type: TypeRef,
+) -> str | None:
+    if plan.post_values:
+        return None
+
+    lua_args = ", ".join(plan.lua_params)
+    lua_args = f"{owner_type}& self" + (f", {lua_args}" if lua_args else "")
+    lines = [f"[]({lua_args}) {{"] if return_type.cpp in {"", "void"} else [f"[]({lua_args}) -> {return_type.cpp} {{"]
+    lines.extend(f"    {line}" for line in plan.prelude)
+    if return_type.cpp in {"", "void"}:
+        lines.append(f"    {call_expr};")
+        lines.append("    lua_sf::releaseLongLivedResources(self);")
+    else:
+        lines.append(f"    auto result = {call_expr};")
+        lines.append("    if (result)")
+        lines.append("        lua_sf::releaseLongLivedResources(self);")
+        lines.append("    return result;")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def shader_uniform_array_lambda(cpp_type: str, param_name: str) -> str:
+    return "\n".join(
+        [
+            f"[](sf::Shader& self, std::string name, sol::object {param_name}) {{",
+            f"    auto {param_name}_buffer = lua_sf::array_from_object<{cpp_type}>({param_name});",
+            (
+                f"    self.setUniformArray(name, {param_name}_buffer.data(), "
+                f"static_cast<unsigned long long>({param_name}_buffer.size()));"
+            ),
+            "}",
+        ]
+    )
+
+
+def shader_uniform_array_block(var_name: str, lua_owner: str) -> list[str]:
+    lines: list[str] = []
+
+    for index, binding in enumerate(SHADER_UNIFORM_ARRAY_BINDINGS):
+        macro = "LUASF_STUB_FUNCTION" if index == 0 else "LUASF_STUB_OVERLOAD"
+        lines.append(
+            f'    {macro}({cpp_string_literal(lua_owner)}, "setUniformArray", '
+            f'{cpp_string_literal(f"fun(self: {lua_owner}, name: string, values: {binding["lua"]})")});'
+        )
+
+    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
+        lines.append(
+            f'    LUASF_STUB_FUNCTION({cpp_string_literal(lua_owner)}, '
+            f'{cpp_string_literal(binding["method"])}, '
+            f'{cpp_string_literal(f"fun(self: {lua_owner}, name: string, values: {binding["lua"]})")});'
+        )
+
+    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
+        lines.append(f'    auto {binding["local"]} =')
+        append_indented_block(
+            lines,
+            shader_uniform_array_lambda(binding["cpp"], "values"),
+            "        ",
+            ";",
+        )
+
+    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
+        lines.append(f'    {var_name}.set_function("{binding["method"]}", {binding["local"]});')
+
+    capture_list = ", ".join(binding["local"] for binding in SHADER_UNIFORM_ARRAY_BINDINGS)
+    lines.append(f'    {var_name}.set_function("setUniformArray",')
+    lines.append(f"        [{capture_list}](sf::Shader& self, std::string name, sol::object values) {{")
+    lines.append("            if (values.get_type() != sol::type::table)")
+    lines.append('                throw std::runtime_error("sf.Shader.setUniformArray expects a Lua array");')
+    lines.append("            sol::table table = values.as<sol::table>();")
+    lines.append("            sol::object first = table[1];")
+    lines.append("            if (lua_sf::is_nil_object(first))")
+    lines.append(
+        '                throw std::runtime_error("sf.Shader.setUniformArray cannot infer an empty array; '
+        'use setUniformFloatArray, setUniformVec2Array, setUniformVec3Array, setUniformVec4Array, '
+        'setUniformMat3Array, or setUniformMat4Array");'
+    )
+    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
+        lines.append(f'            if ({binding["check"]})')
+        lines.append("            {")
+        lines.append(f'                {binding["local"]}(self, name, values);')
+        lines.append("                return;")
+        lines.append("            }")
+    lines.append('            throw std::runtime_error("sf.Shader.setUniformArray received an unsupported array element type");')
+    lines.append("        }")
+    lines.append("    );")
+    return lines
 
 
 def meta_assignment_block(var_name: str, meta_function: str, lambdas: list[str], indent: str = "    ") -> list[str]:
@@ -1495,6 +1922,7 @@ class Sol2Generator:
         selected_order: list[tuple[str, tuple[str, tuple[str, ...], bool]]] = []
         lua_owner = lua_path_for_type(full_name)
         operator_methods: list[tuple[dict[str, Any], str]] = []
+        emit_shader_uniform_array = False
 
         inherited_methods = self._inherited_methods_for(cls, full_name)
         own_methods = [
@@ -1511,6 +1939,9 @@ class Sol2Generator:
                 continue
             if name.startswith("operator"):
                 operator_methods.append((method, dispatch_type))
+                continue
+            if full_name == "sf::Shader" and name == "setUniformArray":
+                emit_shader_uniform_array = True
                 continue
 
             for params in constructor_param_sets(method.get("parameters", [])):
@@ -1557,6 +1988,11 @@ class Sol2Generator:
                 )
             lambdas = [item[0] for item in items]
             lines.extend(overload_block(name, lambdas, "    ", f"{var_name}.set_function"))
+            if emit_shader_uniform_array and full_name == "sf::Shader" and name == "setUniform":
+                lines.extend(shader_uniform_array_block(var_name, lua_owner))
+                emit_shader_uniform_array = False
+        if emit_shader_uniform_array and full_name == "sf::Shader":
+            lines.extend(shader_uniform_array_block(var_name, lua_owner))
         lines.extend(self._emit_operator_methods(var_name, full_name, lua_owner, operator_methods, skipped_lines))
         lines.extend(skipped_lines)
         return lines
