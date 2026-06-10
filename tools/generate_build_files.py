@@ -9,38 +9,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    from .replace_model import (
+        MANUAL_DEPENDENCIES,
+        MANUAL_HEADER_DECLARATION_PREFIX_OWNERS,
+        MANUAL_HEADER_OWNERS,
+        MODULE_ORDER,
+        TYPE_DECL_KINDS,
+    )
+except ImportError:
+    from replace_model import (
+        MANUAL_DEPENDENCIES,
+        MANUAL_HEADER_DECLARATION_PREFIX_OWNERS,
+        MANUAL_HEADER_OWNERS,
+        MODULE_ORDER,
+        TYPE_DECL_KINDS,
+    )
+
 
 SCHEMA_VERSION = 1
 ORDER_CACHE_VERSION = 4
-MODULE_ORDER = {"System": 0, "Window": 1, "Graphics": 2, "Audio": 3, "Network": 4}
-TYPE_DECL_KINDS = {"CLASS_DECL", "STRUCT_DECL", "CLASS_TEMPLATE", "ENUM_DECL", "TYPEDEF_DECL", "TYPE_ALIAS_DECL"}
 INCLUDE_RE = re.compile(r'#\s*include\s+[<"]([^">]+)[">]')
-
-MANUAL_DEPENDENCIES = {
-    "bind_Vector": {"bind_Angle", "bind_Color"},
-    "bind_Rect": {"bind_Vector"},
-    "bind_Matrix": {"bind_Transform"},
-    "bind_Event": {"bind_Vector", "bind_Joystick", "bind_Keyboard", "bind_Mouse", "bind_Sensor"},
-    "bind_Handle": set(),
-    "bind_Drawable": set(),
-}
-
-MANUAL_HEADER_OWNERS = {
-    "Drawable": "bind_Drawable",
-    "Event": "bind_Event",
-    "Rect": "bind_Rect",
-    "Vector2": "bind_Vector",
-    "Vector3": "bind_Vector",
-    "WindowHandle": "bind_Handle",
-}
-
-MANUAL_HEADER_DECLARATION_PREFIX_OWNERS = {
-    "Glsl": {
-        "Vector": "bind_Vector",
-        "Matrix": "bind_Matrix",
-    },
-}
-
 
 @dataclass(frozen=True)
 class BindingEntry:
@@ -617,12 +606,20 @@ def cmake_list(paths: list[str]) -> str:
     return "\n".join(f'    "{path}"' for path in paths)
 
 
-def collect_header_paths(project_root: Path, entries: dict[str, BindingEntry], order: list[str]) -> list[str]:
+def collect_header_paths(
+    project_root: Path,
+    entries: dict[str, BindingEntry],
+    order: list[str],
+    excluded_headers: set[str] | None = None,
+) -> list[str]:
+    excluded_headers = excluded_headers or set()
     seen: set[str] = set()
     headers: list[str] = []
 
     for path in sorted((project_root / "include").glob("*.hpp")) + sorted((project_root / "include").glob("*.inl")):
         header = rel(path, project_root)
+        if header in excluded_headers:
+            continue
         headers.append(header)
         seen.add(header)
 
@@ -651,9 +648,9 @@ def render_outputs(
     state_factory_name: str,
 ) -> None:
     sources = [entries[name].source_path for name in order]
-    headers = collect_header_paths(cmake_project_root, entries, order)
     entry_source = rel(source_output, cmake_project_root)
     public_header = rel(public_header_output, cmake_project_root)
+    headers = collect_header_paths(cmake_project_root, entries, order, {public_header})
     includes = "\n".join(f'#include "{entries[name].include_path}"' for name in order)
     bind_calls = "\n".join(f"    {name}(lua);" for name in order)
 
