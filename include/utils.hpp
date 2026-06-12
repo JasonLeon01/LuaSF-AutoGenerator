@@ -45,22 +45,63 @@ inline sol::table sf_table(sol::state_view lua)
     return lua["sf"].get_or_create<sol::table>();
 }
 
+class WindowHandle
+{
+public:
+    WindowHandle() = default;
+
+    explicit WindowHandle(std::uintptr_t value)
+        : handle_(nativeFromInteger(value))
+    {
+    }
+
+    [[nodiscard]] static WindowHandle fromNative(sf::WindowHandle handle)
+    {
+        WindowHandle result;
+        result.handle_ = handle;
+        return result;
+    }
+
+    [[nodiscard]] sf::WindowHandle native() const
+    {
+        return handle_;
+    }
+
+    [[nodiscard]] std::uintptr_t toInteger() const
+    {
+        return integerFromNative(handle_);
+    }
+
+private:
+    [[nodiscard]] static sf::WindowHandle nativeFromInteger(std::uintptr_t value)
+    {
+#if defined(SFML_SYSTEM_WINDOWS) || defined(SFML_SYSTEM_MACOS) || defined(SFML_SYSTEM_IOS) || defined(SFML_SYSTEM_ANDROID)
+        return reinterpret_cast<sf::WindowHandle>(value);
+#else
+        return static_cast<sf::WindowHandle>(value);
+#endif
+    }
+
+    [[nodiscard]] static std::uintptr_t integerFromNative(sf::WindowHandle handle)
+    {
+#if defined(SFML_SYSTEM_WINDOWS) || defined(SFML_SYSTEM_MACOS) || defined(SFML_SYSTEM_IOS) || defined(SFML_SYSTEM_ANDROID)
+        return reinterpret_cast<std::uintptr_t>(handle);
+#else
+        return static_cast<std::uintptr_t>(handle);
+#endif
+    }
+
+    sf::WindowHandle handle_{};
+};
+
 inline sf::WindowHandle window_handle_from_integer(std::uintptr_t value)
 {
-#if defined(SFML_SYSTEM_WINDOWS) || defined(SFML_SYSTEM_MACOS) || defined(SFML_SYSTEM_IOS) || defined(SFML_SYSTEM_ANDROID)
-    return reinterpret_cast<sf::WindowHandle>(value);
-#else
-    return static_cast<sf::WindowHandle>(value);
-#endif
+    return WindowHandle(value).native();
 }
 
 inline std::uintptr_t window_handle_to_integer(sf::WindowHandle handle)
 {
-#if defined(SFML_SYSTEM_WINDOWS) || defined(SFML_SYSTEM_MACOS) || defined(SFML_SYSTEM_IOS) || defined(SFML_SYSTEM_ANDROID)
-    return reinterpret_cast<std::uintptr_t>(handle);
-#else
-    return static_cast<std::uintptr_t>(handle);
-#endif
+    return WindowHandle::fromNative(handle).toInteger();
 }
 
 template <typename T>

@@ -136,6 +136,10 @@ class TypeRef:
 
     @property
     def cpp(self) -> str:
+        return semantic_cpp_type(self.spelling, self.canonical)
+
+    @property
+    def canonical_cpp(self) -> str:
         return clean_cpp_type(self.canonical or self.spelling)
 
     @property
@@ -144,6 +148,121 @@ class TypeRef:
 
 
 # --- Lua name helpers ---
+
+
+CPP_BUILTIN_TYPES = {
+    "void", "bool", "char", "signed char", "unsigned char",
+    "short", "unsigned short", "int", "unsigned", "unsigned int",
+    "long", "unsigned long", "long long", "unsigned long long",
+    "float", "double", "long double", "wchar_t", "char8_t",
+    "char16_t", "char32_t",
+}
+
+PUBLIC_TYPE_ALIASES: dict[str, str] = {}
+
+
+def core_cpp_type(value: str) -> str:
+    value = clean_cpp_type(value)
+    while value.endswith("&") or value.endswith("*"):
+        value = value[:-1].strip()
+    for prefix in ("const ", "volatile "):
+        if value.startswith(prefix):
+            value = value[len(prefix):].strip()
+    return clean_cpp_type(value)
+
+
+def is_anonymous_cpp_name(value: str) -> bool:
+    return "(unnamed" in value or "(anonymous" in value
+
+
+def set_public_type_aliases(api: dict[str, Any]) -> None:
+    aliases: dict[str, set[str]] = {}
+    for file_item in api.get("files", []):
+        for item in walk_declarations(file_item.get("declarations", [])):
+            if item.get("kind") not in TYPE_DECL_KINDS:
+                continue
+            qualified_name = clean_cpp_type(item.get("qualified_name") or item.get("name") or "")
+            if not qualified_name or is_anonymous_cpp_name(qualified_name):
+                continue
+            aliases.setdefault(qualified_name.rsplit("::", 1)[-1], set()).add(qualified_name)
+
+    PUBLIC_TYPE_ALIASES.clear()
+    PUBLIC_TYPE_ALIASES.update({
+        name: next(iter(values))
+        for name, values in aliases.items()
+        if len(values) == 1
+    })
+
+
+def walk_declarations(items: list[dict[str, Any]]):
+    for item in items:
+        yield item
+        yield from walk_declarations(item.get("children", []))
+
+
+def qualified_name_for_token_from_canonical(token: str, canonical: str) -> str | None:
+    match = re.search(
+        rf"(?<![A-Za-z0-9_:])sf(?:::[A-Za-z_][A-Za-z0-9_]*)*::{re.escape(token)}(?![A-Za-z0-9_:])",
+        canonical,
+    )
+    if match:
+        return match.group(0)
+    return None
+
+
+def qualify_known_public_type_tokens(value: str, canonical: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
+            return token
+        alias = PUBLIC_TYPE_ALIASES.get(token)
+        if alias:
+            return alias
+        return qualified_name_for_token_from_canonical(token, canonical) or token
+
+    return re.sub(r"(?<![A-Za-z0-9_:])(?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*(?![A-Za-z0-9_:])", replace, value)
+
+
+def qualify_public_spelling(source: str, canonical: str) -> str:
+    source = qualify_known_public_type_tokens(source, canonical)
+    if "sf::" in canonical and "<" in source:
+        source = qualify_sfml_template_aliases(source, canonical)
+    source_core = core_cpp_type(source)
+    canonical_core = core_cpp_type(canonical)
+    if not source_core or source_core in CPP_BUILTIN_TYPES:
+        return source
+    if source_core.startswith(("std::", "sol::", "lua_")):
+        return source
+    if canonical_core.startswith("sf::") and not source_core.startswith("sf::"):
+        replacement = f"sf::{source_core}"
+        if source_core.count("::") == 0 and "::" in canonical_core and "<" not in canonical_core:
+            replacement = canonical_core.rsplit("::", 1)[0] + f"::{source_core}"
+        return re.sub(rf"(?<![A-Za-z0-9_:]){re.escape(source_core)}(?![A-Za-z0-9_:])", replacement, source, count=1)
+    return source
+
+
+def qualify_sfml_template_aliases(value: str, canonical: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
+            return token
+        alias = PUBLIC_TYPE_ALIASES.get(token)
+        if alias:
+            return alias
+        qualified_name = qualified_name_for_token_from_canonical(token, canonical)
+        if qualified_name:
+            return qualified_name
+        return f"sf::{token}"
+
+    return re.sub(r"(?<![A-Za-z0-9_:])(?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*(?![A-Za-z0-9_:])", replace, value)
+
+
+def semantic_cpp_type(spelling: str, canonical: str) -> str:
+    source = clean_cpp_type(spelling or canonical)
+    canonical = clean_cpp_type(canonical or spelling)
+    if source:
+        return qualify_public_spelling(source, canonical)
+    return canonical
 
 
 def lua_name_for_type(qualified_name: str) -> str:
@@ -395,7 +514,7 @@ _register_packet_io(PacketIoType(
     suffix="Int64",
     packet_aliases=("int64",),
     packet_lua_type="integer",
-    packet_result_expr="static_cast<long long>(value)",
+    packet_result_expr="static_cast<std::int64_t>(value)",
 ))
 
 _register_packet_io(PacketIoType(
@@ -403,7 +522,7 @@ _register_packet_io(PacketIoType(
     suffix="UInt64",
     packet_aliases=("uint64",),
     packet_lua_type="integer",
-    packet_result_expr="static_cast<unsigned long long>(value)",
+    packet_result_expr="static_cast<std::uint64_t>(value)",
 ))
 
 _register_packet_io(PacketIoType(
@@ -516,18 +635,18 @@ SHADER_UNIFORM_ARRAY_BINDINGS: tuple[dict[str, str], ...] = (
     {
         "method": "setUniformVec2Array",
         "local": "setUniformVec2Array",
-        "cpp": "sf::Vector2<float>",
+        "cpp": "sf::Vector2f",
         "lua": "sf.Vector2f[]",
         "param": "vectorArray",
-        "check": "first.is<sf::Vector2<float>>()",
+        "check": "first.is<sf::Vector2f>()",
     },
     {
         "method": "setUniformVec3Array",
         "local": "setUniformVec3Array",
-        "cpp": "sf::Vector3<float>",
+        "cpp": "sf::Vector3f",
         "lua": "sf.Vector3f[]",
         "param": "vectorArray",
-        "check": "first.is<sf::Vector3<float>>()",
+        "check": "first.is<sf::Vector3f>()",
     },
     {
         "method": "setUniformVec4Array",
@@ -629,7 +748,7 @@ _t("ll_reset_nonvoid",
 
 _t("shader_uniform_array",
     "auto {param}_buffer = lua_sf::array_from_object<{cpp_type}>({param});",
-    "self.setUniformArray(name, {param}_buffer.data(), static_cast<unsigned long long>({param}_buffer.size()));",
+    "self.setUniformArray(name, {param}_buffer.data(), static_cast<std::size_t>({param}_buffer.size()));",
 )
 
 
@@ -652,6 +771,8 @@ IGNORE_NAMES: frozenset[str] = frozenset({
 })
 
 IGNORE_PARAM_TYPES: frozenset[str] = frozenset({
+    "VkInstance",
+    "VkSurfaceKHR",
     "VkInstance_T*",
     "VkAllocationCallbacks*",
     "std::locale",

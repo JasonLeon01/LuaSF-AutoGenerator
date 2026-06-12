@@ -109,6 +109,10 @@ class TypeRef:
 
     @property
     def cpp(self) -> str:
+        return semantic_cpp_type(self.spelling, self.canonical)
+
+    @property
+    def canonical_cpp(self) -> str:
         return clean_cpp_type(self.canonical or self.spelling)
 
     @property
@@ -151,6 +155,111 @@ def clean_cpp_type(value: str) -> str:
     value = value.replace("< ", "<").replace(" >", ">")
     value = value.replace(" ,", ",")
     return value
+
+
+CPP_BUILTIN_TYPES = {
+    "void", "bool", "char", "signed char", "unsigned char",
+    "short", "unsigned short", "int", "unsigned", "unsigned int",
+    "long", "unsigned long", "long long", "unsigned long long",
+    "float", "double", "long double", "wchar_t", "char8_t",
+    "char16_t", "char32_t",
+}
+
+PUBLIC_TYPE_ALIASES: dict[str, str] = {}
+
+
+def core_cpp_type(value: str) -> str:
+    value = clean_cpp_type(value)
+    while value.endswith("&") or value.endswith("*"):
+        value = value[:-1].strip()
+    for prefix in ("const ", "volatile "):
+        if value.startswith(prefix):
+            value = value[len(prefix):].strip()
+    return clean_cpp_type(value)
+
+
+def set_public_type_aliases(api: dict[str, Any]) -> None:
+    aliases: dict[str, set[str]] = {}
+    for file_item in api.get("files", []):
+        for item in walk_declarations(file_item.get("declarations", [])):
+            if item.get("kind") not in TYPE_DECL_KINDS:
+                continue
+            qualified_name = clean_cpp_type(item.get("qualified_name") or item.get("name") or "")
+            if not qualified_name or is_anonymous_cpp_name(qualified_name):
+                continue
+            aliases.setdefault(qualified_name.rsplit("::", 1)[-1], set()).add(qualified_name)
+
+    PUBLIC_TYPE_ALIASES.clear()
+    PUBLIC_TYPE_ALIASES.update({
+        name: next(iter(values))
+        for name, values in aliases.items()
+        if len(values) == 1
+    })
+
+
+def qualified_name_for_token_from_canonical(token: str, canonical: str) -> str | None:
+    match = re.search(
+        rf"(?<![A-Za-z0-9_:])sf(?:::[A-Za-z_][A-Za-z0-9_]*)*::{re.escape(token)}(?![A-Za-z0-9_:])",
+        canonical,
+    )
+    if match:
+        return match.group(0)
+    return None
+
+
+def qualify_known_public_type_tokens(value: str, canonical: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
+            return token
+        alias = PUBLIC_TYPE_ALIASES.get(token)
+        if alias:
+            return alias
+        return qualified_name_for_token_from_canonical(token, canonical) or token
+
+    return re.sub(r"(?<![A-Za-z0-9_:])(?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*(?![A-Za-z0-9_:])", replace, value)
+
+
+def qualify_public_spelling(source: str, canonical: str) -> str:
+    source = qualify_known_public_type_tokens(source, canonical)
+    if "sf::" in canonical and "<" in source:
+        source = qualify_sfml_template_aliases(source, canonical)
+    source_core = core_cpp_type(source)
+    canonical_core = core_cpp_type(canonical)
+    if not source_core or source_core in CPP_BUILTIN_TYPES:
+        return source
+    if source_core.startswith(("std::", "sol::", "lua_")):
+        return source
+    if canonical_core.startswith("sf::") and not source_core.startswith("sf::"):
+        replacement = f"sf::{source_core}"
+        if source_core.count("::") == 0 and "::" in canonical_core and "<" not in canonical_core:
+            replacement = canonical_core.rsplit("::", 1)[0] + f"::{source_core}"
+        return re.sub(rf"(?<![A-Za-z0-9_:]){re.escape(source_core)}(?![A-Za-z0-9_:])", replacement, source, count=1)
+    return source
+
+
+def qualify_sfml_template_aliases(value: str, canonical: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
+            return token
+        alias = PUBLIC_TYPE_ALIASES.get(token)
+        if alias:
+            return alias
+        qualified_name = qualified_name_for_token_from_canonical(token, canonical)
+        if qualified_name:
+            return qualified_name
+        return f"sf::{token}"
+
+    return re.sub(r"(?<![A-Za-z0-9_:])(?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*(?![A-Za-z0-9_:])", replace, value)
+
+
+def semantic_cpp_type(spelling: str, canonical: str) -> str:
+    source = clean_cpp_type(spelling or canonical)
+    canonical = clean_cpp_type(canonical or spelling)
+    if source:
+        return qualify_public_spelling(source, canonical)
+    return canonical
 
 
 def sfml_include_for_file(file_item: dict[str, Any]) -> str:
@@ -383,7 +492,7 @@ def lua_param_type(type_ref: TypeRef) -> str:
     cpp = type_ref.cpp
     base = remove_cvref(cpp)
     if is_window_handle(type_ref):
-        return "std::uintptr_t"
+        return "const lua_sf::WindowHandle&"
     if is_std_function(type_ref):
         return "sol::object"
     if is_sf_string(cpp) or is_filesystem_path(cpp) or is_string_view(cpp) or is_std_string(cpp) or is_std_wstring(cpp):
@@ -398,7 +507,7 @@ def lua_param_type(type_ref: TypeRef) -> str:
 def from_lua_expr(type_ref: TypeRef, name: str) -> tuple[list[str], str]:
     cpp = type_ref.cpp
     if is_window_handle(type_ref):
-        return [], f"lua_sf::window_handle_from_integer({name})"
+        return [], f"{name}.native()"
     signature = std_function_signature(type_ref)
     if signature:
         return [], f"lua_sf::function_from_object<{signature}>({name})"
@@ -453,7 +562,7 @@ def return_expr(type_ref: TypeRef, expr: str, indent: str, function_name: str | 
             f"{indent}return sol::as_table(std::move(result_values));",
         ]
     if is_window_handle(type_ref):
-        return [f"{indent}return lua_sf::window_handle_to_integer({expr});"]
+        return [f"{indent}return lua_sf::WindowHandle::fromNative({expr});"]
     if is_sf_string(cpp):
         return [f"{indent}return lua_sf::to_utf8_string({expr});"]
     if is_std_wstring(cpp):
@@ -480,7 +589,7 @@ def return_expr(type_ref: TypeRef, expr: str, indent: str, function_name: str | 
 def result_value_expr(type_ref: TypeRef, expr: str, function_name: str | None = None) -> tuple[list[str], str]:
     cpp = type_ref.cpp
     if is_window_handle(type_ref):
-        return [], f"lua_sf::window_handle_to_integer({expr})"
+        return [], f"lua_sf::WindowHandle::fromNative({expr})"
     if is_sf_string(cpp):
         return [], f"lua_sf::to_utf8_string({expr})"
     if is_std_wstring(cpp):
@@ -643,8 +752,8 @@ def cpp_type_to_lua_type(value: str) -> str:
         return "table"
     if base in {"lua_State*", "lua_State"}:
         return "any"
-    if is_window_handle(TypeRef(spelling=base, canonical=base)):
-        return "integer"
+    if base == "lua_sf::WindowHandle" or is_window_handle(TypeRef(spelling=base, canonical=base)):
+        return "sf.WindowHandle"
 
     type_ref = TypeRef(spelling=value, canonical=value)
     if std_function_signature(type_ref):
@@ -1010,7 +1119,7 @@ def make_lambda(
     elif return_type.cpp and return_type.cpp != "void" and not plan.post_values and not return_needs_wrapper(return_type):
         trailing_return = f" -> {return_type.cpp}"
     elif is_window_handle(return_type):
-        trailing_return = " -> std::uintptr_t"
+        trailing_return = " -> lua_sf::WindowHandle"
     elif (
         is_sf_string(return_type.cpp)
         or is_std_string(return_type.cpp)
@@ -1166,6 +1275,7 @@ class Sol2Generator:
         self.include_root = output_root / "include"
         self.src_root = output_root / "src"
         self.skipped: list[str] = []
+        set_public_type_aliases(api)
         self.class_map = self._build_class_map()
         self.type_includes = self._build_type_includes()
         self.sorted_type_includes = sorted(self.type_includes.items(), key=lambda item: len(item[0]), reverse=True)
@@ -1541,7 +1651,7 @@ class Sol2Generator:
             if return_needs_wrapper(type_ref):
                 getter_capture = "[lua]" if return_wrapper_uses_lua(type_ref) else "[]"
                 if is_window_handle(type_ref):
-                    getter_return = " -> std::uintptr_t"
+                    getter_return = " -> lua_sf::WindowHandle"
                 elif optional_element(type_ref.cpp):
                     getter_return = " -> sol::object"
                 elif is_sf_string(type_ref.cpp) or is_filesystem_path(type_ref.cpp) or is_char_pointer(type_ref.cpp):
