@@ -68,6 +68,26 @@ download_url() {
     fi
 }
 
+apply_sol2_pr1606_patch() {
+    if [ "$(uname -s)" != "Darwin" ]; then
+        echo "Skipping PR #1606 patch to sol2 (not macOS)."
+        return
+    fi
+
+    target="third_party/sol2/include/sol2/sol.hpp"
+    if grep -q "T& emplace(T& arg) noexcept" "$target"; then
+        echo "PR #1606 patch already applied to sol2."
+        return
+    fi
+
+    echo "Applying PR #1606 patch to sol2 (Clang 18+ optional::emplace fix)..."
+    if ! command -v patch >/dev/null 2>&1; then
+        echo "Missing 'patch'; cannot apply PR #1606 patch for sol2 on macOS." >&2
+        exit 1
+    fi
+    patch -N --forward "$target" < "$SCRIPT_DIR/cmake/sol/pr1606.patch"
+}
+
 if [ ! -f "third_party/sol2/include/sol2/sol.hpp" ]; then
     echo "Downloading sol2 headers..."
     mkdir -p "third_party/sol2/include/sol2"
@@ -80,9 +100,4 @@ else
     echo "Using existing third_party/sol2."
 fi
 
-echo "Applying PR #1606 patch to sol2 (Clang 18+ optional::emplace fix)..."
-if command -v patch >/dev/null 2>&1; then
-    patch -N --forward "third_party/sol2/include/sol2/sol.hpp" < "$SCRIPT_DIR/cmake/sol/pr1606.patch" 2>/dev/null || true
-else
-    echo "Warning: 'patch' not found; skipping PR #1606 patch for sol2." >&2
-fi
+apply_sol2_pr1606_patch
