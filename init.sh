@@ -85,6 +85,12 @@ apply_sol2_pr1606_patch() {
         echo "Missing 'patch'; cannot apply PR #1606 patch for sol2 on macOS." >&2
         exit 1
     fi
+
+    if file "$target" | grep -q "CRLF"; then
+        echo "Converting CRLF to LF in $target before patching..."
+        tr -d '\r' < "$target" > "$target.tmp" && mv "$target.tmp" "$target"
+    fi
+
     patch -N --forward "$target" < "$SCRIPT_DIR/cmake/sol/pr1606.patch"
 }
 
