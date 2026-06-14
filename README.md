@@ -1,5 +1,7 @@
 # LuaSF AutoGenerator
 
+English | [简体中文](README_zh_CN.md)
+
 LuaSF AutoGenerator generates a CMake-based Lua module that exposes SFML to Lua through sol2. The generated module can be consumed either from source or from a collected binary package.
 
 The generated Lua module is named `LuaSF`. In CMake, consumers link against `LuaSF::LuaSF`.
@@ -50,13 +52,28 @@ The collected packages are written to `output/result/embedded/` and `output/resu
 
 ## Use From A CMake Project
 
-There are two supported integration styles:
+There are three supported integration styles:
 
 - **Packaged integration**: copy `output/result/embedded/` into your project, for example as `LuaSF/`.
 - **Source integration**: copy or vendor the generated `output/` source project into your project, for example as `LuaSF/`.
 - **Plain Lua extension**: copy or reference `output/result/extension/bin/` from Lua and run `require("LuaSF")`.
 
-The public target is the same in both cases: `LuaSF::LuaSF`.
+The CMake integration target for embedded use is `LuaSF::LuaSF`. The plain Lua extension is a separate build output.
+
+### Plain Lua Extension
+
+Use this when a normal Lua runtime should load LuaSF with `require("LuaSF")`.
+
+The extension build is selected by the `LUASF_LUA_EXTENSION` macro. The generated `LuaSF_lua_extension` CMake target defines this macro and exports `luaopen_LuaSF`. The default `LuaSF` / `LuaSF::LuaSF` target does not define this macro, so source integration in an IDE remains the embedded version unless you explicitly build the extension target or define the macro yourself.
+
+After collecting results, put `output/result/extension/bin/` on `package.cpath`:
+
+```lua
+package.cpath = [[path/to/extension/bin/?.dll;]] .. package.cpath
+local sf = require("LuaSF")
+```
+
+The extension package does not bundle `lua.dll`; it is loaded by the host Lua runtime and must match the extension's Lua ABI.
 
 ### Packaged Integration
 
