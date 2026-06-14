@@ -31,6 +31,17 @@ if not exist "third_party\sol2\include\sol2\sol.hpp" (
     exit /b 1
 )
 
+echo Applying sol2 PR #1606 patch if needed...
+git apply --reverse --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch >nul 2>nul
+if not errorlevel 1 (
+    echo PR #1606 patch already applied to sol2.
+) else (
+    git apply --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
+    if errorlevel 1 exit /b 1
+    git apply --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
+    if errorlevel 1 exit /b 1
+)
+
 echo Extracting SFML public API...
 "%PYTHON_EXE%" tools\extract_sfml_api.py
 if errorlevel 1 exit /b 1
@@ -54,14 +65,20 @@ if "%BUILD_CONFIG%"=="" (
     exit /b 1
 )
 
-echo Building LuaSF and Lua stub from output CMake project...
-cmake --build output\build --config %BUILD_CONFIG% --target LuaSF_lua_stub --parallel 1
+echo Building embedded LuaSF, Lua extension, and Lua stub from output CMake project...
+cmake --build output\build --config %BUILD_CONFIG% --target LuaSF_build_outputs --parallel 1
 if errorlevel 1 exit /b 1
+
+set "EMBEDDED_DLL=%~dp0output\build\bin\%BUILD_CONFIG%\embedded\LuaSF.dll"
+set "EXTENSION_DLL=%~dp0output\build\bin\%BUILD_CONFIG%\extension\LuaSF.dll"
+if not exist "%EMBEDDED_DLL%" set "EMBEDDED_DLL=%~dp0output\build\bin\embedded\%BUILD_CONFIG%\LuaSF.dll"
+if not exist "%EXTENSION_DLL%" set "EXTENSION_DLL=%~dp0output\build\bin\extension\%BUILD_CONFIG%\LuaSF.dll"
 
 echo.
 echo Done.
 echo Project: %~dp0output
-echo DLL: %~dp0output\build\bin\%BUILD_CONFIG%\LuaSF.dll
+echo Embedded DLL: %EMBEDDED_DLL%
+echo Lua extension: %EXTENSION_DLL%
 echo Stub: %~dp0output\build\LuaSF.lua
 
 endlocal

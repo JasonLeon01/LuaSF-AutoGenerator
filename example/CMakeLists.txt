@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(SFLua LANGUAGES C CXX)
 
-# Copy output/result/ into example/LuaSF/ before building:
-#   cp -r ../output/result ./LuaSF
+# Copy output/result/embedded/ into example/LuaSF/ before building:
+#   cp -r ../output/result/embedded ./LuaSF
 
 add_subdirectory(LuaSF)
 

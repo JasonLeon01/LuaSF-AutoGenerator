@@ -15,5 +15,8 @@
 struct lua_State;
 
 extern "C" LUASF_API int {module_name}_register(lua_State* state);
+#if defined(LUASF_LUA_EXTENSION)
+extern "C" LUASF_API int luaopen_{module_name}(lua_State* state);
+#endif
 extern "C" LUASF_API lua_State* {state_factory_name}();
 extern "C" LUASF_API int {module_name}_write_stub(const char* path);

@@ -28,23 +28,14 @@ if [ ! -f "third_party/sol2/include/sol2/sol.hpp" ]; then
 fi
 
 apply_sol2_pr1606_patch() {
-    if [ "$(uname -s)" != "Darwin" ]; then
-        echo "Skipping PR #1606 patch to sol2 (not macOS)."
-        return
-    fi
-
-    target="third_party/sol2/include/sol2/sol.hpp"
-    if grep -q "T& emplace(T& arg) noexcept" "$target"; then
+    echo "Applying sol2 PR #1606 patch if needed..."
+    patch_file="$SCRIPT_DIR/cmake/sol/pr1606.patch"
+    if git apply --reverse --check --directory=third_party/sol2 -p1 "$patch_file" >/dev/null 2>&1; then
         echo "PR #1606 patch already applied to sol2."
         return
     fi
-
-    echo "Applying PR #1606 patch to sol2 (Clang 18+ optional::emplace fix)..."
-    if ! command -v patch >/dev/null 2>&1; then
-        echo "Missing 'patch'; cannot apply PR #1606 patch for sol2 on macOS." >&2
-        exit 1
-    fi
-    patch -N --forward "$target" < "$SCRIPT_DIR/cmake/sol/pr1606.patch"
+    git apply --check --directory=third_party/sol2 -p1 "$patch_file"
+    git apply --directory=third_party/sol2 -p1 "$patch_file"
 }
 
 apply_sol2_pr1606_patch
@@ -73,17 +64,23 @@ if [ -z "$BUILD_CONFIG" ]; then
     exit 1
 fi
 
-echo "Building LuaSF and Lua stub from output CMake project..."
-cmake --build output/build --config "$BUILD_CONFIG" --target LuaSF_lua_stub --parallel 1
+echo "Building embedded LuaSF, Lua extension, and Lua stub from output CMake project..."
+cmake --build output/build --config "$BUILD_CONFIG" --target LuaSF_build_outputs --parallel 1
 
-MODULE_FILE=$(find output/build/bin \( -type f -o -type l \) \( -name 'LuaSF.dll' -o -name 'LuaSF.dylib' -o -name 'LuaSF.so' \) 2>/dev/null | head -n 1 || true)
+EMBEDDED_MODULE_FILE=$(find output/build/bin -path "*/embedded/*" \( -type f -o -type l \) \( -name 'LuaSF.dll' -o -name 'LuaSF.dylib' -o -name 'LuaSF.so' \) 2>/dev/null | head -n 1 || true)
+EXTENSION_MODULE_FILE=$(find output/build/bin -path "*/extension/*" \( -type f -o -type l \) \( -name 'LuaSF.dll' -o -name 'LuaSF.so' \) 2>/dev/null | head -n 1 || true)
 
 echo
 echo "Done."
 echo "Project: $SCRIPT_DIR/output"
-if [ -n "$MODULE_FILE" ]; then
-    echo "Module: $SCRIPT_DIR/$MODULE_FILE"
+if [ -n "$EMBEDDED_MODULE_FILE" ]; then
+    echo "Embedded module: $SCRIPT_DIR/$EMBEDDED_MODULE_FILE"
 else
-    echo "Module: output/build/bin"
+    echo "Embedded module: output/build/bin/$BUILD_CONFIG/embedded"
+fi
+if [ -n "$EXTENSION_MODULE_FILE" ]; then
+    echo "Lua extension: $SCRIPT_DIR/$EXTENSION_MODULE_FILE"
+else
+    echo "Lua extension: output/build/bin/$BUILD_CONFIG/extension"
 fi
 echo "Stub: $SCRIPT_DIR/output/build/LuaSF.lua"

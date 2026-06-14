@@ -34,7 +34,7 @@ build.bat Release
 sh build.sh Release
 ```
 
-This creates the generated source project under `output/` and builds the LuaSF dynamic library and Lua language-server stub.
+This creates the generated source project under `output/` and builds the embedded LuaSF dynamic library, the plain Lua extension module, and the Lua language-server stub.
 
 To collect a redistributable package:
 
@@ -46,20 +46,21 @@ collect_result.bat Release
 sh collect_result.sh Release
 ```
 
-The collected package is written to `output/result/`.
+The collected packages are written to `output/result/embedded/` and `output/result/extension/`.
 
 ## Use From A CMake Project
 
 There are two supported integration styles:
 
-- **Packaged integration**: copy `output/result/` into your project, for example as `LuaSF/`.
+- **Packaged integration**: copy `output/result/embedded/` into your project, for example as `LuaSF/`.
 - **Source integration**: copy or vendor the generated `output/` source project into your project, for example as `LuaSF/`.
+- **Plain Lua extension**: copy or reference `output/result/extension/bin/` from Lua and run `require("LuaSF")`.
 
 The public target is the same in both cases: `LuaSF::LuaSF`.
 
 ### Packaged Integration
 
-Use this when you have already run `collect_result.bat` or `collect_result.sh` and copied `output/result/` into your project.
+Use this when you have already run `collect_result.bat` or `collect_result.sh` and copied `output/result/embedded/` into your project.
 
 ```cmake
 cmake_minimum_required(VERSION 3.21)

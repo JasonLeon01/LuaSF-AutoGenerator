@@ -30,6 +30,24 @@ extern "C" LUASF_API int {module_name}_register(lua_State* state)
     return 0;
 }}
 
+#if defined(LUASF_LUA_EXTENSION)
+extern "C" LUASF_API int luaopen_{module_name}(lua_State* state)
+{{
+    if (state == nullptr)
+    {{
+        return 0;
+    }}
+
+    if ({module_name}_register(state) != 0)
+    {{
+        return luaL_error(state, "failed to register {module_name}");
+    }}
+
+    lua_getglobal(state, "sf");
+    return 1;
+}}
+#endif
+
 extern "C" LUASF_API lua_State* {state_factory_name}()
 {{
     lua_State* state = luaL_newstate();

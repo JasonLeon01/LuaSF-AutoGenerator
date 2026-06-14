@@ -49,3 +49,14 @@ if not exist "third_party\sol2\include\sol2\sol.hpp" (
 ) else (
     echo Using existing third_party\sol2.
 )
+
+echo Applying sol2 PR #1606 patch if needed...
+git apply --reverse --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch >nul 2>nul
+if not errorlevel 1 (
+    echo PR #1606 patch already applied to sol2.
+) else (
+    git apply --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
+    if errorlevel 1 exit /b 1
+    git apply --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
+    if errorlevel 1 exit /b 1
+)

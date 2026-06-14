@@ -69,29 +69,14 @@ download_url() {
 }
 
 apply_sol2_pr1606_patch() {
-    if [ "$(uname -s)" != "Darwin" ]; then
-        echo "Skipping PR #1606 patch to sol2 (not macOS)."
-        return
-    fi
-
-    target="third_party/sol2/include/sol2/sol.hpp"
-    if grep -q "T& emplace(T& arg) noexcept" "$target"; then
+    echo "Applying sol2 PR #1606 patch if needed..."
+    patch_file="$SCRIPT_DIR/cmake/sol/pr1606.patch"
+    if git apply --reverse --check --directory=third_party/sol2 -p1 "$patch_file" >/dev/null 2>&1; then
         echo "PR #1606 patch already applied to sol2."
         return
     fi
-
-    echo "Applying PR #1606 patch to sol2 (Clang 18+ optional::emplace fix)..."
-    if ! command -v patch >/dev/null 2>&1; then
-        echo "Missing 'patch'; cannot apply PR #1606 patch for sol2 on macOS." >&2
-        exit 1
-    fi
-
-    if file "$target" | grep -q "CRLF"; then
-        echo "Converting CRLF to LF in $target before patching..."
-        tr -d '\r' < "$target" > "$target.tmp" && mv "$target.tmp" "$target"
-    fi
-
-    patch -N --forward "$target" < "$SCRIPT_DIR/cmake/sol/pr1606.patch"
+    git apply --check --directory=third_party/sol2 -p1 "$patch_file"
+    git apply --directory=third_party/sol2 -p1 "$patch_file"
 }
 
 if [ ! -f "third_party/sol2/include/sol2/sol.hpp" ]; then
