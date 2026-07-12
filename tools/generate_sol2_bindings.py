@@ -30,7 +30,10 @@ try:
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TYPE_DECL_KINDS,
+        TypeRef,
+        clean_cpp_type,
         get_lifecycle,
+        is_anonymous_cpp_name,
         packet_io_info,
         param_info_memory,
         param_info_stream,
@@ -41,6 +44,9 @@ try:
         render_ll_stream_open,
         render_shader_uniform_array,
         render_template,
+        sanitize_identifier,
+        set_public_type_aliases,
+        walk_declarations,
     )
 except ImportError:
     from replace_model import (
@@ -65,7 +71,10 @@ except ImportError:
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TYPE_DECL_KINDS,
+        TypeRef,
+        clean_cpp_type,
         get_lifecycle,
+        is_anonymous_cpp_name,
         packet_io_info,
         param_info_memory,
         param_info_stream,
@@ -76,6 +85,9 @@ except ImportError:
         render_ll_stream_open,
         render_shader_uniform_array,
         render_template,
+        sanitize_identifier,
+        set_public_type_aliases,
+        walk_declarations,
     )
 
 
@@ -89,35 +101,6 @@ class StubParam:
 class StubSignature:
     params: tuple[StubParam, ...]
     returns: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class TypeRef:
-    spelling: str = ""
-    canonical: str = ""
-    kind: str = ""
-
-    @classmethod
-    def from_json(cls, value: dict[str, Any] | None) -> "TypeRef":
-        if not value:
-            return cls()
-        return cls(
-            spelling=value.get("spelling", "") or "",
-            canonical=value.get("canonical", "") or value.get("spelling", "") or "",
-            kind=value.get("kind", "") or "",
-        )
-
-    @property
-    def cpp(self) -> str:
-        return semantic_cpp_type(self.spelling, self.canonical)
-
-    @property
-    def canonical_cpp(self) -> str:
-        return clean_cpp_type(self.canonical or self.spelling)
-
-    @property
-    def source(self) -> str:
-        return clean_cpp_type(self.spelling or self.canonical)
 
 
 @dataclass
@@ -138,138 +121,8 @@ class PlannedCall:
     unsupported: str | None = None
 
 
-def clean_cpp_type(value: str) -> str:
-    value = value.strip()
-    value = value.replace("std::basic_string<char>", "std::string")
-    value = value.replace("std::basic_string<wchar_t>", "std::wstring")
-    value = value.replace("std::basic_string_view<char>", "std::string_view")
-    value = value.replace("std::basic_string_view<wchar_t>", "std::wstring_view")
-    value = value.replace("std::__cxx11::basic_string<char>", "std::string")
-    value = value.replace("std::__cxx11::basic_string<wchar_t>", "std::wstring")
-    value = value.replace("std::__cxx11::basic_string_view<char>", "std::string_view")
-    value = value.replace("std::__cxx11::basic_string_view<wchar_t>", "std::wstring_view")
-    value = re.sub(r"\bstd::filesystem::path\b", "std::filesystem::path", value)
-    value = re.sub(r"\s+", " ", value)
-    value = value.replace(" &", "&").replace("& ", "&")
-    value = value.replace(" *", "*").replace("* ", "*")
-    value = value.replace("< ", "<").replace(" >", ">")
-    value = value.replace(" ,", ",")
-    return value
-
-
-CPP_BUILTIN_TYPES = {
-    "void", "bool", "char", "signed char", "unsigned char",
-    "short", "unsigned short", "int", "unsigned", "unsigned int",
-    "long", "unsigned long", "long long", "unsigned long long",
-    "float", "double", "long double", "wchar_t", "char8_t",
-    "char16_t", "char32_t",
-}
-
-PUBLIC_TYPE_ALIASES: dict[str, str] = {}
-
-
-def core_cpp_type(value: str) -> str:
-    value = clean_cpp_type(value)
-    while value.endswith("&") or value.endswith("*"):
-        value = value[:-1].strip()
-    for prefix in ("const ", "volatile "):
-        if value.startswith(prefix):
-            value = value[len(prefix):].strip()
-    return clean_cpp_type(value)
-
-
-def set_public_type_aliases(api: dict[str, Any]) -> None:
-    aliases: dict[str, set[str]] = {}
-    for file_item in api.get("files", []):
-        for item in walk_declarations(file_item.get("declarations", [])):
-            if item.get("kind") not in TYPE_DECL_KINDS:
-                continue
-            qualified_name = clean_cpp_type(item.get("qualified_name") or item.get("name") or "")
-            if not qualified_name or is_anonymous_cpp_name(qualified_name):
-                continue
-            aliases.setdefault(qualified_name.rsplit("::", 1)[-1], set()).add(qualified_name)
-
-    PUBLIC_TYPE_ALIASES.clear()
-    PUBLIC_TYPE_ALIASES.update({
-        name: next(iter(values))
-        for name, values in aliases.items()
-        if len(values) == 1
-    })
-
-
-def qualified_name_for_token_from_canonical(token: str, canonical: str) -> str | None:
-    match = re.search(
-        rf"(?<![A-Za-z0-9_:])sf(?:::[A-Za-z_][A-Za-z0-9_]*)*::{re.escape(token)}(?![A-Za-z0-9_:])",
-        canonical,
-    )
-    if match:
-        return match.group(0)
-    return None
-
-
-def qualify_known_public_type_tokens(value: str, canonical: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
-            return token
-        alias = PUBLIC_TYPE_ALIASES.get(token)
-        if alias:
-            return alias
-        return qualified_name_for_token_from_canonical(token, canonical) or token
-
-    return re.sub(r"(?<![A-Za-z0-9_:])(?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*(?![A-Za-z0-9_:])", replace, value)
-
-
-def qualify_public_spelling(source: str, canonical: str) -> str:
-    source = qualify_known_public_type_tokens(source, canonical)
-    if "sf::" in canonical and "<" in source:
-        source = qualify_sfml_template_aliases(source, canonical)
-    source_core = core_cpp_type(source)
-    canonical_core = core_cpp_type(canonical)
-    if not source_core or source_core in CPP_BUILTIN_TYPES:
-        return source
-    if source_core.startswith(("std::", "sol::", "lua_")):
-        return source
-    if canonical_core.startswith("sf::") and not source_core.startswith("sf::"):
-        replacement = f"sf::{source_core}"
-        if source_core.count("::") == 0 and "::" in canonical_core and "<" not in canonical_core:
-            replacement = canonical_core.rsplit("::", 1)[0] + f"::{source_core}"
-        return re.sub(rf"(?<![A-Za-z0-9_:]){re.escape(source_core)}(?![A-Za-z0-9_:])", replacement, source, count=1)
-    return source
-
-
-def qualify_sfml_template_aliases(value: str, canonical: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
-            return token
-        alias = PUBLIC_TYPE_ALIASES.get(token)
-        if alias:
-            return alias
-        qualified_name = qualified_name_for_token_from_canonical(token, canonical)
-        if qualified_name:
-            return qualified_name
-        return f"sf::{token}"
-
-    return re.sub(r"(?<![A-Za-z0-9_:])(?:[A-Z][A-Za-z0-9_]*)(?:::[A-Z][A-Za-z0-9_]*)*(?![A-Za-z0-9_:])", replace, value)
-
-
-def semantic_cpp_type(spelling: str, canonical: str) -> str:
-    source = clean_cpp_type(spelling or canonical)
-    canonical = clean_cpp_type(canonical or spelling)
-    if source:
-        return qualify_public_spelling(source, canonical)
-    return canonical
-
-
 def sfml_include_for_file(file_item: dict[str, Any]) -> str:
     return "/".join(Path(file_item["path"]).parts[-3:])
-
-
-def walk_declarations(items: list[dict[str, Any]]):
-    for item in items:
-        yield item
-        yield from walk_declarations(item.get("children", []))
 
 
 def remove_cvref(value: str) -> str:
@@ -437,10 +290,6 @@ def std_function_lua_type(type_ref: TypeRef) -> str:
 def is_window_handle(type_ref: TypeRef) -> bool:
     source = remove_cvref(type_ref.source)
     return source in {"WindowHandle", "sf::WindowHandle"}
-
-
-def is_anonymous_cpp_name(value: str) -> bool:
-    return "(unnamed" in value or "(anonymous" in value
 
 
 def normalize_array_element(value: str) -> str:
@@ -658,13 +507,6 @@ def output_array_resize_lines_for_count(plan: PlannedCall, count_expr: str) -> l
     return lines
 
 
-def sanitize_identifier(value: str) -> str:
-    value = re.sub(r"[^0-9A-Za-z_]", "_", value)
-    if value and value[0].isdigit():
-        value = "_" + value
-    return value or "unnamed"
-
-
 def qualify_relative_type(value: str, owner_full_name: str) -> str:
     value = clean_cpp_type(value)
     base = remove_cvref(value)
@@ -879,6 +721,8 @@ def cpp_string_literal(value: str) -> str:
 def stub_owner_for_table_var(table_var: str) -> str:
     if table_var == "sf":
         return "sf"
+    if table_var.startswith("table_"):
+        return table_var[len("table_") :].replace("__", ".")
     if table_var.startswith("sf_"):
         return "sf." + table_var[len("sf_") :].replace("_", ".")
     return table_var.replace("_", ".")
@@ -1419,6 +1263,10 @@ class Sol2Generator:
             return self._emit_free_function(item, table_var, namespace_prefix)
         if kind == "VAR_DECL":
             return self._emit_var(item, table_var, namespace_prefix)
+        if kind in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}:
+            owner_full = namespace_prefix.rstrip(":")
+            owner_lua = lua_path_for_type(owner_full) if owner_full else stub_owner_for_table_var(table_var)
+            return self._emit_type_alias(item, table_var, owner_full, owner_lua)
         return []
 
     def _emit_children(self, item: dict[str, Any], table_var: str, namespace_prefix: str) -> list[str]:
@@ -1476,7 +1324,13 @@ class Sol2Generator:
 
         nested_table_var = f"table_{sanitize_identifier(full_name)}"
         lines.append(f'    sol::table {nested_table_var} = {table_var}["{lua_name}"].get<sol::table>();')
-        lines.append(f'    LUASF_STUB_CLASS({cpp_string_literal(lua_path)});')
+        if bases:
+            bases_lua = ", ".join(lua_path_for_type(base) for base in bases)
+            lines.append(
+                f'    LUASF_STUB_CLASS({cpp_string_literal(lua_path)}, {cpp_string_literal(bases_lua)});'
+            )
+        else:
+            lines.append(f'    LUASF_STUB_CLASS({cpp_string_literal(lua_path)});')
         lines.extend(self._stub_field_lines(cls))
         lines.extend(self._emit_constructors(cls, var_name, full_name))
         lines.extend(self._emit_fields(cls, var_name, full_name))
@@ -1487,7 +1341,38 @@ class Sol2Generator:
                 lines.extend(self._emit_enum(child, nested_table_var))
             elif child.get("kind") in {"CLASS_DECL", "STRUCT_DECL"}:
                 lines.extend(self._emit_class(child, nested_table_var))
+            elif child.get("kind") == "VAR_DECL" and child.get("access") in (None, "public"):
+                lines.extend(self._emit_var(child, nested_table_var, f"{full_name}::"))
+            elif child.get("kind") in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}:
+                lines.extend(self._emit_type_alias(child, nested_table_var, full_name, lua_path))
         return lines
+
+    def _emit_type_alias(
+        self,
+        item: dict[str, Any],
+        table_var: str,
+        owner_full_name: str,
+        owner_lua_path: str,
+    ) -> list[str]:
+        name = item.get("name", "")
+        if not name or name in IGNORE_NAMES:
+            return []
+        type_ref = TypeRef.from_json(item.get("type"))
+        target_cpp = clean_cpp_type(type_ref.canonical_cpp or type_ref.cpp or type_ref.source)
+        if not target_cpp:
+            return []
+        if not target_cpp.startswith("sf::"):
+            if "::" in target_cpp:
+                target_cpp = f"sf::{target_cpp}"
+            else:
+                target_cpp = f"{owner_full_name}::{target_cpp}"
+        target_lua = lua_path_for_type(target_cpp)
+        alias_lua = f"{owner_lua_path}.{name}"
+        target_leaf = lua_leaf_for_type(target_cpp)
+        return [
+            f'    LUASF_STUB_ALIAS({cpp_string_literal(alias_lua)}, {cpp_string_literal(target_lua)});',
+            f'    {table_var}["{name}"] = {table_var}["{target_leaf}"];',
+        ]
 
     def _stub_field_lines(self, cls: dict[str, Any]) -> list[str]:
         lines: list[str] = []
@@ -1596,6 +1481,10 @@ class Sol2Generator:
                 default_lambda = f"[]() {{\n    return std::make_unique<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
                 overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub))
+            elif self._has_implicit_default_constructor(cls):
+                default_lambda = f"[]() {{\n    return std::make_unique<{full_name}>();\n}}"
+                default_stub = StubSignature((), (lua_owner,))
+                overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub))
             else:
                 return []
         overloads.sort(key=lambda item: item[0])
@@ -1637,6 +1526,24 @@ class Sol2Generator:
                 return False  # const member → no default ctor
             has_field = True
         return has_field
+
+    @staticmethod
+    def _has_implicit_default_constructor(cls: dict[str, Any]) -> bool:
+        """True when the API model lists no CONSTRUCTOR children at all, so C++ still
+        provides a pure implicit default constructor (e.g. sf::Clock).
+
+        Any declared constructor (including copy/move) means we must not invent new().
+        Also skip types with public const/readonly fields (e.g. sf::Version).
+        """
+        if cls.get("abstract"):
+            return False
+        for child in cls.get("children", []):
+            kind = child.get("kind")
+            if kind == "CONSTRUCTOR":
+                return False
+            if kind == "FIELD_DECL" and child.get("access") in (None, "public") and child.get("readonly"):
+                return False
+        return True
 
     def _emit_fields(self, cls: dict[str, Any], var_name: str, full_name: str) -> list[str]:
         lines: list[str] = []

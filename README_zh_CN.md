@@ -225,3 +225,19 @@ end
 ## 运行时说明
 
 LuaSF 会被构建为动态库。运行时，可执行程序必须能够加载 LuaSF 本身、Lua 运行时和 SFML 运行时库。可以使用 `luasf_copy_runtime_dlls(target)` 或 `luasf_copy_runtime_files(target)` 将所需运行时库复制到可执行文件旁边。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
+
+## Third-Party Licenses
+
+打包依赖的版本记录在 `versions.conf` 中，其许可证如下：
+
+| 依赖 | 版本 | 许可证 |
+| --- | --- | --- |
+| [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
+| [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
+| [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
+
+SFML 还可能附带其他外部库，这些库遵循各自的许可证；详见 SFML 文档以及 `third_party/SFML/license.md`。

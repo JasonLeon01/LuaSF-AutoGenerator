@@ -225,3 +225,19 @@ The collected package exposes these CMake items:
 ## Runtime Notes
 
 LuaSF is built as a dynamic library. At runtime, the executable must be able to load LuaSF itself, the Lua runtime, and the SFML runtime libraries. Use `luasf_copy_runtime_dlls(target)` or `luasf_copy_runtime_files(target)` to copy the required runtime libraries next to your executable.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Third-Party Licenses
+
+Bundled dependency versions are recorded in `versions.conf`. Their licenses are:
+
+| Dependency | Version | License |
+| --- | --- | --- |
+| [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
+| [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
+| [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
+
+SFML may also redistribute external libraries under their own licenses; see the SFML documentation and `third_party/SFML/license.md` for details.

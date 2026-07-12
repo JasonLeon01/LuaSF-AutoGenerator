@@ -109,7 +109,7 @@ inline void end()
         output().close();
 }
 
-inline void class_(const char* name)
+inline void class_(const char* name, const char* bases = "")
 {
     if (!enabled())
         return;
@@ -117,7 +117,20 @@ inline void class_(const char* name)
     flush_pending_function();
     close_pending_class();
     pending_class() = name;
-    output() << "\n---@class " << name << "\n";
+    output() << "\n---@class " << name;
+    if (bases != nullptr && bases[0] != '\0')
+        output() << " : " << bases;
+    output() << "\n";
+}
+
+inline void alias_(const char* name, const char* target)
+{
+    if (!enabled())
+        return;
+
+    flush_pending_function();
+    close_pending_class();
+    output() << "---@alias " << name << " " << target << "\n";
 }
 
 inline void field(const char* name, const char* type)
@@ -193,7 +206,8 @@ inline void indexed_field(const char* owner, const char* key_type, const char* v
 
 } // namespace lua_sf::stub
 
-#define LUASF_STUB_CLASS(name) ::lua_sf::stub::class_(name)
+#define LUASF_STUB_CLASS(...) ::lua_sf::stub::class_(__VA_ARGS__)
+#define LUASF_STUB_ALIAS(name, target) ::lua_sf::stub::alias_(name, target)
 #define LUASF_STUB_FIELD(name, type_str) ::lua_sf::stub::field(name, type_str)
 #define LUASF_STUB_VALUE(owner, name, type_str) ::lua_sf::stub::value(owner, name, type_str)
 #define LUASF_STUB_FUNCTION(owner, name, type_str) ::lua_sf::stub::function(owner, name, type_str)

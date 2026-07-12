@@ -15,6 +15,12 @@ void bind_Vector(sol::state_view lua)
     LUASF_STUB_FUNCTION("sf.Vector2i", "perpendicular", "fun(self: sf.Vector2i): sf.Vector2i");
     LUASF_STUB_FUNCTION("sf.Vector2i", "componentWiseMul", "fun(self: sf.Vector2i, rhs: sf.Vector2i): sf.Vector2i");
     LUASF_STUB_FUNCTION("sf.Vector2i", "componentWiseDiv", "fun(self: sf.Vector2i, rhs: sf.Vector2i): sf.Vector2i");
+    LUASF_STUB_OPERATOR("sf.Vector2i", "add(sf.Vector2i): sf.Vector2i");
+    LUASF_STUB_OPERATOR("sf.Vector2i", "sub(sf.Vector2i): sf.Vector2i");
+    LUASF_STUB_OPERATOR("sf.Vector2i", "mul(integer): sf.Vector2i");
+    LUASF_STUB_OPERATOR("sf.Vector2i", "div(integer): sf.Vector2i");
+    LUASF_STUB_OPERATOR("sf.Vector2i", "unm: sf.Vector2i");
+    LUASF_STUB_OPERATOR("sf.Vector2i", "eq(sf.Vector2i): boolean");
 
     LUASF_STUB_CLASS("sf.Vector2f");
     LUASF_STUB_FIELD("x", "number");
@@ -33,18 +39,31 @@ void bind_Vector(sol::state_view lua)
     LUASF_STUB_FUNCTION("sf.Vector2f", "projectedOnto", "fun(self: sf.Vector2f, axis: sf.Vector2f): sf.Vector2f");
     LUASF_STUB_FUNCTION("sf.Vector2f", "componentWiseMul", "fun(self: sf.Vector2f, rhs: sf.Vector2f): sf.Vector2f");
     LUASF_STUB_FUNCTION("sf.Vector2f", "componentWiseDiv", "fun(self: sf.Vector2f, rhs: sf.Vector2f): sf.Vector2f");
+    LUASF_STUB_OPERATOR("sf.Vector2f", "add(sf.Vector2f): sf.Vector2f");
+    LUASF_STUB_OPERATOR("sf.Vector2f", "sub(sf.Vector2f): sf.Vector2f");
+    LUASF_STUB_OPERATOR("sf.Vector2f", "mul(number): sf.Vector2f");
+    LUASF_STUB_OPERATOR("sf.Vector2f", "div(number): sf.Vector2f");
+    LUASF_STUB_OPERATOR("sf.Vector2f", "unm: sf.Vector2f");
+    LUASF_STUB_OPERATOR("sf.Vector2f", "eq(sf.Vector2f): boolean");
 
     LUASF_STUB_CLASS("sf.Vector2u");
     LUASF_STUB_FIELD("x", "integer");
     LUASF_STUB_FIELD("y", "integer");
     LUASF_STUB_FUNCTION("sf.Vector2u", "new", "fun(x: integer, y: integer): sf.Vector2u");
     LUASF_STUB_FUNCTION("sf.Vector2u", "unpack", "fun(self: sf.Vector2u): integer, integer");
+    LUASF_STUB_OPERATOR("sf.Vector2u", "add(sf.Vector2u): sf.Vector2u");
+    LUASF_STUB_OPERATOR("sf.Vector2u", "sub(sf.Vector2u): sf.Vector2u");
+    LUASF_STUB_OPERATOR("sf.Vector2u", "mul(integer): sf.Vector2u");
+    LUASF_STUB_OPERATOR("sf.Vector2u", "div(integer): sf.Vector2u");
+    LUASF_STUB_OPERATOR("sf.Vector2u", "unm: sf.Vector2u");
+    LUASF_STUB_OPERATOR("sf.Vector2u", "eq(sf.Vector2u): boolean");
 
     LUASF_STUB_CLASS("sf.Vector2b");
     LUASF_STUB_FIELD("x", "boolean");
     LUASF_STUB_FIELD("y", "boolean");
     LUASF_STUB_FUNCTION("sf.Vector2b", "new", "fun(x: boolean, y: boolean): sf.Vector2b");
     LUASF_STUB_FUNCTION("sf.Vector2b", "unpack", "fun(self: sf.Vector2b): boolean, boolean");
+    LUASF_STUB_OPERATOR("sf.Vector2b", "eq(sf.Vector2b): boolean");
 
     LUASF_STUB_CLASS("sf.Vector3i");
     LUASF_STUB_FIELD("x", "integer");
@@ -52,6 +71,12 @@ void bind_Vector(sol::state_view lua)
     LUASF_STUB_FIELD("z", "integer");
     LUASF_STUB_FUNCTION("sf.Vector3i", "new", "fun(x: integer, y: integer, z: integer): sf.Vector3i");
     LUASF_STUB_FUNCTION("sf.Vector3i", "unpack", "fun(self: sf.Vector3i): integer, integer, integer");
+    LUASF_STUB_OPERATOR("sf.Vector3i", "add(sf.Vector3i): sf.Vector3i");
+    LUASF_STUB_OPERATOR("sf.Vector3i", "sub(sf.Vector3i): sf.Vector3i");
+    LUASF_STUB_OPERATOR("sf.Vector3i", "mul(integer): sf.Vector3i");
+    LUASF_STUB_OPERATOR("sf.Vector3i", "div(integer): sf.Vector3i");
+    LUASF_STUB_OPERATOR("sf.Vector3i", "unm: sf.Vector3i");
+    LUASF_STUB_OPERATOR("sf.Vector3i", "eq(sf.Vector3i): boolean");
 
     LUASF_STUB_CLASS("sf.Vector3f");
     LUASF_STUB_FIELD("x", "number");
@@ -61,6 +86,12 @@ void bind_Vector(sol::state_view lua)
     LUASF_STUB_FUNCTION("sf.Vector3f", "unpack", "fun(self: sf.Vector3f): number, number, number");
     LUASF_STUB_FUNCTION("sf.Vector3f", "length", "fun(self: sf.Vector3f): number");
     LUASF_STUB_FUNCTION("sf.Vector3f", "normalized", "fun(self: sf.Vector3f): sf.Vector3f");
+    LUASF_STUB_OPERATOR("sf.Vector3f", "add(sf.Vector3f): sf.Vector3f");
+    LUASF_STUB_OPERATOR("sf.Vector3f", "sub(sf.Vector3f): sf.Vector3f");
+    LUASF_STUB_OPERATOR("sf.Vector3f", "mul(number): sf.Vector3f");
+    LUASF_STUB_OPERATOR("sf.Vector3f", "div(number): sf.Vector3f");
+    LUASF_STUB_OPERATOR("sf.Vector3f", "unm: sf.Vector3f");
+    LUASF_STUB_OPERATOR("sf.Vector3f", "eq(sf.Vector3f): boolean");
 
     LUASF_STUB_CLASS("sf.Vector3u");
     LUASF_STUB_FIELD("x", "integer");
@@ -68,6 +99,12 @@ void bind_Vector(sol::state_view lua)
     LUASF_STUB_FIELD("z", "integer");
     LUASF_STUB_FUNCTION("sf.Vector3u", "new", "fun(x: integer, y: integer, z: integer): sf.Vector3u");
     LUASF_STUB_FUNCTION("sf.Vector3u", "unpack", "fun(self: sf.Vector3u): integer, integer, integer");
+    LUASF_STUB_OPERATOR("sf.Vector3u", "add(sf.Vector3u): sf.Vector3u");
+    LUASF_STUB_OPERATOR("sf.Vector3u", "sub(sf.Vector3u): sf.Vector3u");
+    LUASF_STUB_OPERATOR("sf.Vector3u", "mul(integer): sf.Vector3u");
+    LUASF_STUB_OPERATOR("sf.Vector3u", "div(integer): sf.Vector3u");
+    LUASF_STUB_OPERATOR("sf.Vector3u", "unm: sf.Vector3u");
+    LUASF_STUB_OPERATOR("sf.Vector3u", "eq(sf.Vector3u): boolean");
 
     LUASF_STUB_CLASS("sf.Vector3b");
     LUASF_STUB_FIELD("x", "boolean");
@@ -75,6 +112,7 @@ void bind_Vector(sol::state_view lua)
     LUASF_STUB_FIELD("z", "boolean");
     LUASF_STUB_FUNCTION("sf.Vector3b", "new", "fun(x: boolean, y: boolean, z: boolean): sf.Vector3b");
     LUASF_STUB_FUNCTION("sf.Vector3b", "unpack", "fun(self: sf.Vector3b): boolean, boolean, boolean");
+    LUASF_STUB_OPERATOR("sf.Vector3b", "eq(sf.Vector3b): boolean");
 
     LUASF_STUB_CLASS("sf.Vector4i");
     LUASF_STUB_FIELD("x", "integer");

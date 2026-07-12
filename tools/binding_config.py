@@ -39,6 +39,7 @@ def clean_cpp_type(value: str) -> str:
     value = value.replace("std::__cxx11::basic_string<wchar_t>", "std::wstring")
     value = value.replace("std::__cxx11::basic_string_view<char>", "std::string_view")
     value = value.replace("std::__cxx11::basic_string_view<wchar_t>", "std::wstring_view")
+    value = re.sub(r"\bstd::filesystem::path\b", "std::filesystem::path", value)
     value = re.sub(r"\s+", " ", value)
     value = value.replace(" &", "&").replace("& ", "&")
     value = value.replace(" *", "*").replace("* ", "*")
