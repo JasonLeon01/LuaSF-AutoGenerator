@@ -85,6 +85,7 @@ __all__ = [
     # From binding_config (re-exported for convenience)
     "AUDIO_EFFECT_PROCESSOR_LUA_TYPE",
     "AUDIO_EFFECT_PROCESSOR_SIGNATURE",
+    "SPECIAL_CALLBACK_LUA_TYPES",
     "BINDING_TEMPLATES",
     "BYTE_TYPES",
     "CONVERSION_REGISTRY",
@@ -176,6 +177,7 @@ try:
         PacketIoType,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
+        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TYPE_DECL_KINDS,
@@ -208,6 +210,7 @@ except ImportError:
         PacketIoType,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
+        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TYPE_DECL_KINDS,

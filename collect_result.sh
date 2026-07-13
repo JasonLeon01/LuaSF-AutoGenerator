@@ -32,6 +32,10 @@ fi
 if [ ! -d "$LIB_DIR" ]; then
     LIB_DIR="$BUILD_DIR/lib"
 fi
+SFML_LIB_DIR="$BUILD_DIR/third_party/SFML/lib/$CONFIG"
+if [ ! -d "$SFML_LIB_DIR" ]; then
+    SFML_LIB_DIR="$BUILD_DIR/third_party/SFML/lib"
+fi
 EMBEDDED_BIN_DIR="$BUILD_DIR/bin/$CONFIG/embedded"
 if [ ! -d "$EMBEDDED_BIN_DIR" ]; then
     EMBEDDED_BIN_DIR="$BUILD_DIR/bin/embedded/$CONFIG"
@@ -184,11 +188,14 @@ if [ -d "$OUTPUT_DIR/third_party/Lua" ]; then
     write_lua_compat_header lualib.h
 fi
 
-if [ -d "$EMBEDDED_LIB_DIR" ]; then
+if [ -d "$EMBEDDED_LIB_DIR" ] || [ -d "$LIB_DIR" ] || [ -d "$SFML_LIB_DIR" ]; then
     mkdir -p "$EMBEDDED_RESULT_DIR/lib"
-    find "$EMBEDDED_LIB_DIR" -maxdepth 1 \( -type f -o -type l \) \
-        \( -name '*.lib' -o -name '*.exp' -o -name '*.a' \) \
-        -exec cp -L {} "$EMBEDDED_RESULT_DIR/lib"/ \;
+    for source_dir in "$EMBEDDED_LIB_DIR" "$LIB_DIR" "$SFML_LIB_DIR"; do
+        [ -d "$source_dir" ] || continue
+        find "$source_dir" -maxdepth 1 \( -type f -o -type l \) \
+            \( -name '*.lib' -o -name '*.exp' -o -name '*.a' \) \
+            -exec cp -L {} "$EMBEDDED_RESULT_DIR/lib"/ \;
+    done
     rmdir "$EMBEDDED_RESULT_DIR/lib" 2>/dev/null || true
 fi
 

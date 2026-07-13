@@ -836,6 +836,20 @@ AUDIO_EFFECT_PROCESSOR_LUA_TYPE: str = (
     "outputFrames: number[][], outputFrameCount: integer, frameChannelCount: integer): integer|table|nil"
 )
 
+SPECIAL_CALLBACK_LUA_TYPES: dict[str, str] = {
+    AUDIO_EFFECT_PROCESSOR_SIGNATURE: AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
+    "void(const sf::Text::ShapedGlyph&, std::uint32_t&, sf::Color&, sf::Color&, float&)": (
+        "fun(shapedGlyph: sf.Text.ShapedGlyph, style: integer, fillColor: sf.Color, "
+        "outlineColor: sf.Color, outlineThickness: number): "
+        "{style: integer?, fillColor: sf.Color?, outlineColor: sf.Color?, outlineThickness: number?}|nil"
+    ),
+    "bool(const void*, std::size_t)": "fun(data: string, size: integer): boolean",
+    "bool(void*, std::size_t&)": (
+        "fun(capacity: integer): string|integer[]|"
+        "{keepGoing: boolean?, data: string|integer[]?}|boolean|nil"
+    ),
+}
+
 # TYPE_DECL_KINDS (used by both generate_sol2_bindings and generate_build_files;
 # includes CLASS_TEMPLATE for the build-file scanner)
 TYPE_DECL_KINDS: frozenset[str] = frozenset({

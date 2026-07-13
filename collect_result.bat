@@ -29,6 +29,8 @@ if not exist "%BIN_DIR%" (
 if not exist "%LIB_DIR%" (
     set "LIB_DIR=%BUILD_DIR%\lib"
 )
+set "SFML_LIB_DIR=%BUILD_DIR%\third_party\SFML\lib\%CONFIG%"
+if not exist "%SFML_LIB_DIR%" set "SFML_LIB_DIR=%BUILD_DIR%\third_party\SFML\lib"
 set "EMBEDDED_BIN_DIR=%BUILD_DIR%\bin\%CONFIG%\embedded"
 if not exist "%EMBEDDED_BIN_DIR%" set "EMBEDDED_BIN_DIR=%BUILD_DIR%\bin\embedded\%CONFIG%"
 if not exist "%EMBEDDED_BIN_DIR%" set "EMBEDDED_BIN_DIR=%BIN_DIR%"
@@ -134,6 +136,23 @@ if exist "%EMBEDDED_LIB_DIR%" (
     mkdir "%EMBEDDED_RESULT_DIR%\lib" >nul 2>nul
     copy /y "%EMBEDDED_LIB_DIR%\*.lib" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
     copy /y "%EMBEDDED_LIB_DIR%\*.exp" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+    copy /y "%EMBEDDED_LIB_DIR%\*.a" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+)
+
+rem Lua's import library is emitted to lib\<config>, while LuaSF's is under
+rem lib\<config>\embedded. SFML libraries use their own third_party directory.
+rem Export all of them so the complete C/C++ dependency set is available.
+if exist "%LIB_DIR%" (
+    mkdir "%EMBEDDED_RESULT_DIR%\lib" >nul 2>nul
+    copy /y "%LIB_DIR%\*.lib" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+    copy /y "%LIB_DIR%\*.exp" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+    copy /y "%LIB_DIR%\*.a" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+)
+if exist "%SFML_LIB_DIR%" (
+    mkdir "%EMBEDDED_RESULT_DIR%\lib" >nul 2>nul
+    copy /y "%SFML_LIB_DIR%\*.lib" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+    copy /y "%SFML_LIB_DIR%\*.exp" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+    copy /y "%SFML_LIB_DIR%\*.a" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
 )
 
 mkdir "%EMBEDDED_RESULT_DIR%\cmake" >nul 2>nul

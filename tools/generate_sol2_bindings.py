@@ -27,6 +27,7 @@ try:
         OUTPUT_REF_NAMES,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
+        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TYPE_DECL_KINDS,
@@ -68,6 +69,7 @@ except ImportError:
         OUTPUT_REF_NAMES,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
+        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TYPE_DECL_KINDS,
@@ -245,7 +247,7 @@ def optional_element(value: str) -> str | None:
 
 
 def std_function_signature(type_ref: TypeRef) -> str | None:
-    for candidate in (type_ref.cpp, type_ref.source):
+    for candidate in (type_ref.cpp, type_ref.source, type_ref.canonical_cpp):
         compact = clean_cpp_type(candidate)
         start = compact.find("std::function")
         if start == -1:
@@ -282,9 +284,54 @@ def is_std_function(type_ref: TypeRef) -> bool:
 
 def std_function_lua_type(type_ref: TypeRef) -> str:
     signature = std_function_signature(type_ref)
-    if signature == AUDIO_EFFECT_PROCESSOR_SIGNATURE:
-        return AUDIO_EFFECT_PROCESSOR_LUA_TYPE
-    return "fun(...): any"
+    if not signature:
+        return "fun(...): any"
+    special = SPECIAL_CALLBACK_LUA_TYPES.get(signature)
+    if special:
+        return special
+
+    match = re.fullmatch(r"(.+?)\((.*)\)", signature)
+    if not match:
+        return "fun(...): any"
+    return_cpp, args_cpp = match.groups()
+    args = split_cpp_arguments(args_cpp)
+    lua_args = [
+        f"arg{index}: {callback_argument_lua_type(arg)}"
+        for index, arg in enumerate(args, start=1)
+        if arg and arg != "void"
+    ]
+    lua_return = type_ref_to_lua_type(TypeRef(spelling=return_cpp, canonical=return_cpp))
+    suffix = "" if remove_cvref(return_cpp) == "void" else f": {lua_return}"
+    return f"fun({', '.join(lua_args)}){suffix}"
+
+
+def callback_argument_lua_type(cpp_type: str) -> str:
+    if "*" in cpp_type:
+        return "any"
+    return type_ref_to_lua_type(TypeRef(spelling=cpp_type, canonical=cpp_type))
+
+
+def split_cpp_arguments(value: str) -> list[str]:
+    if not value.strip():
+        return []
+    args: list[str] = []
+    current: list[str] = []
+    depths = {"<": 0, "(": 0, "[": 0}
+    closing = {">": "<", ")": "(", "]": "["}
+    for ch in value:
+        if ch in depths:
+            depths[ch] += 1
+        elif ch in closing:
+            opener = closing[ch]
+            depths[opener] = max(0, depths[opener] - 1)
+        if ch == "," and not any(depths.values()):
+            args.append(clean_cpp_type("".join(current)))
+            current.clear()
+        else:
+            current.append(ch)
+    if current:
+        args.append(clean_cpp_type("".join(current)))
+    return args
 
 
 def is_window_handle(type_ref: TypeRef) -> bool:
@@ -716,6 +763,20 @@ def stub_fun_type(signature: StubSignature, self_type: str | None = None) -> str
 
 def cpp_string_literal(value: str) -> str:
     return json.dumps(value)
+
+
+def stub_doc_lines(item: dict[str, Any] | None) -> list[str]:
+    """Return the stub-writer call that emits an extracted API docstring."""
+    if not item:
+        return []
+    doc = item.get("doc")
+    if not isinstance(doc, str) or not doc.strip():
+        return []
+    return [f"    LUASF_STUB_DOC({cpp_string_literal(doc)});"]
+
+
+def first_stub_doc(items: list[str | None]) -> str | None:
+    return next((doc for doc in items if doc), None)
 
 
 def stub_owner_for_table_var(table_var: str) -> str:
@@ -1290,13 +1351,15 @@ class Sol2Generator:
         lua_name = lua_leaf_for_type(full_name)
         lua_path = lua_path_for_type(full_name)
         lines = [
+            *stub_doc_lines(enum_item),
             f'    LUASF_STUB_CLASS({cpp_string_literal(lua_path)});',
-            *[
-                f'    LUASF_STUB_FIELD({cpp_string_literal(constant["name"])}, "integer");'
-                for constant in constants
-            ],
-            f'    {table_var}.new_enum("{lua_name}",',
         ]
+        for constant in constants:
+            lines.extend(stub_doc_lines(constant))
+            lines.append(
+                f'    LUASF_STUB_FIELD({cpp_string_literal(constant["name"])}, "integer");'
+            )
+        lines.append(f'    {table_var}.new_enum("{lua_name}",')
         for index, constant in enumerate(constants):
             suffix = "," if index + 1 < len(constants) else ""
             lines.append(f'        "{constant["name"]}", {full_name}::{constant["name"]}{suffix}')
@@ -1324,6 +1387,7 @@ class Sol2Generator:
 
         nested_table_var = f"table_{sanitize_identifier(full_name)}"
         lines.append(f'    sol::table {nested_table_var} = {table_var}["{lua_name}"].get<sol::table>();')
+        lines.extend(stub_doc_lines(cls))
         if bases:
             bases_lua = ", ".join(lua_path_for_type(base) for base in bases)
             lines.append(
@@ -1361,6 +1425,13 @@ class Sol2Generator:
         target_cpp = clean_cpp_type(type_ref.canonical_cpp or type_ref.cpp or type_ref.source)
         if not target_cpp:
             return []
+        if is_std_function(type_ref):
+            alias_lua = f"{owner_lua_path}.{name}"
+            return [
+                *stub_doc_lines(item),
+                f'    LUASF_STUB_ALIAS({cpp_string_literal(alias_lua)}, '
+                f'{cpp_string_literal(std_function_lua_type(type_ref))});',
+            ]
         if not target_cpp.startswith("sf::"):
             if "::" in target_cpp:
                 target_cpp = f"sf::{target_cpp}"
@@ -1370,6 +1441,7 @@ class Sol2Generator:
         alias_lua = f"{owner_lua_path}.{name}"
         target_leaf = lua_leaf_for_type(target_cpp)
         return [
+            *stub_doc_lines(item),
             f'    LUASF_STUB_ALIAS({cpp_string_literal(alias_lua)}, {cpp_string_literal(target_lua)});',
             f'    {table_var}["{name}"] = {table_var}["{target_leaf}"];',
         ]
@@ -1383,6 +1455,7 @@ class Sol2Generator:
             type_ref = TypeRef.from_json(field_item.get("type"))
             if not field_name or should_skip_type(type_ref):
                 continue
+            lines.extend(stub_doc_lines(field_item))
             lines.append(
                 f'    LUASF_STUB_FIELD({cpp_string_literal(field_name)}, '
                 f'{cpp_string_literal(type_ref_to_lua_type(type_ref))});'
@@ -1443,7 +1516,7 @@ class Sol2Generator:
         if cls.get("abstract"):
             return [f"    // {full_name} is abstract; constructor binding is omitted."]
 
-        overloads: list[tuple[tuple[int, int, int, int], str, StubSignature]] = []
+        overloads: list[tuple[tuple[int, int, int, int], str, StubSignature, str | None]] = []
         lua_owner = lua_path_for_type(full_name)
         seen: set[tuple[str, ...]] = set()
         overload_index = 0
@@ -1471,7 +1544,12 @@ class Sol2Generator:
                 if lambda_code:
                     stub_signature = stub_signature_for_item(ctor_item, "new", constructor_return=lua_owner)
                     if stub_signature:
-                        overloads.append((overload_specificity_key(planned, overload_index), lambda_code, stub_signature))
+                        overloads.append((
+                            overload_specificity_key(planned, overload_index),
+                            lambda_code,
+                            stub_signature,
+                            ctor.get("doc"),
+                        ))
                         overload_index += 1
 
         if not overloads:
@@ -1480,17 +1558,17 @@ class Sol2Generator:
             if self._has_default_constructible_aggregate(cls):
                 default_lambda = f"[]() {{\n    return std::make_unique<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
-                overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub))
+                overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub, None))
             elif self._has_implicit_default_constructor(cls):
                 default_lambda = f"[]() {{\n    return std::make_unique<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
-                overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub))
+                overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub, None))
             else:
                 return []
         overloads.sort(key=lambda item: item[0])
         # Emit stub annotations for all overloads, longest first.
         sorted_stubs = [item[2] for item in overloads]
-        stub_lines: list[str] = []
+        stub_lines = stub_doc_lines({"doc": first_stub_doc([item[3] for item in overloads])})
         for i, sig in enumerate(sorted_stubs):
             macro = "LUASF_STUB_FUNCTION" if i == 0 else "LUASF_STUB_OVERLOAD"
             stub_lines.append(
@@ -1590,9 +1668,9 @@ class Sol2Generator:
         return lines
 
     def _emit_methods(self, cls: dict[str, Any], var_name: str, full_name: str) -> list[str]:
-        grouped: dict[str, list[tuple[tuple[int, int, int, int], str, StubSignature, bool]]] = {}
+        grouped: dict[str, list[tuple[tuple[int, int, int, int], str, StubSignature, bool, str | None]]] = {}
         skipped_lines: list[str] = []
-        selected: dict[tuple[str, tuple[str, ...], bool], tuple[int, int, tuple[int, int, int, int], str, StubSignature, bool]] = {}
+        selected: dict[tuple[str, tuple[str, ...], bool], tuple[int, int, tuple[int, int, int, int], str, StubSignature, bool, str | None]] = {}
         selected_order: list[tuple[str, tuple[str, tuple[str, ...], bool]]] = []
         lua_owner = lua_path_for_type(full_name)
         operator_methods: list[tuple[dict[str, Any], str]] = []
@@ -1645,19 +1723,20 @@ class Sol2Generator:
                     overload_index += 1
                     current = selected.get(key)
                     if current is None:
-                        selected[key] = (score, priority, specificity, lambda_code, stub_signature, is_static)
+                        selected[key] = (score, priority, specificity, lambda_code, stub_signature, is_static, method.get("doc"))
                         selected_order.append((name, key))
                     elif priority > current[1] or (priority == current[1] and score > current[0]):
-                        selected[key] = (score, priority, specificity, lambda_code, stub_signature, is_static)
+                        selected[key] = (score, priority, specificity, lambda_code, stub_signature, is_static, method.get("doc"))
 
         for name, key in selected_order:
-            _score, _priority, specificity, lambda_code, stub_signature, is_static = selected[key]
-            grouped.setdefault(name, []).append((specificity, lambda_code, stub_signature, is_static))
+            _score, _priority, specificity, lambda_code, stub_signature, is_static, doc = selected[key]
+            grouped.setdefault(name, []).append((specificity, lambda_code, stub_signature, is_static, doc))
 
         lines: list[str] = []
         for name, items in grouped.items():
             sorted_items = sorted(items, key=lambda item: item[0])
-            for i, (_specificity, _lambda_code, stub_sig, is_static) in enumerate(sorted_items):
+            lines.extend(stub_doc_lines({"doc": first_stub_doc([item[4] for item in sorted_items])}))
+            for i, (_specificity, _lambda_code, stub_sig, is_static, _doc) in enumerate(sorted_items):
                 macro = "LUASF_STUB_FUNCTION" if i == 0 else "LUASF_STUB_OVERLOAD"
                 function_type = stub_fun_type(stub_sig, None if is_static else lua_owner)
                 lines.append(
@@ -1949,6 +2028,7 @@ class Sol2Generator:
         lines: list[str] = []
         if signature:
             owner = stub_owner_for_table_var(table_var)
+            lines.extend(stub_doc_lines(func))
             lines.append(
                 f'    LUASF_STUB_FUNCTION({cpp_string_literal(owner)}, {cpp_string_literal(name)}, '
                 f'{cpp_string_literal(stub_fun_type(signature))});'
@@ -1962,9 +2042,9 @@ class Sol2Generator:
         table_var: str,
         namespace_prefix: str,
     ) -> list[str]:
-        grouped: dict[str, list[tuple[tuple[int, int, int, int], str, StubSignature]]] = {}
+        grouped: dict[str, list[tuple[tuple[int, int, int, int], str, StubSignature, str | None]]] = {}
         skipped_lines: list[str] = []
-        selected: dict[tuple[str, tuple[str, ...]], tuple[int, tuple[int, int, int, int], str, StubSignature]] = {}
+        selected: dict[tuple[str, tuple[str, ...]], tuple[int, tuple[int, int, int, int], str, StubSignature, str | None]] = {}
         selected_order: list[tuple[str, tuple[str, tuple[str, ...]]]] = []
         overload_index = 0
 
@@ -1998,20 +2078,21 @@ class Sol2Generator:
                 overload_index += 1
                 current = selected.get(key)
                 if current is None:
-                    selected[key] = (score, specificity, lambda_code, stub_signature)
+                    selected[key] = (score, specificity, lambda_code, stub_signature, func.get("doc"))
                     selected_order.append((name, key))
                 elif score > current[0]:
-                    selected[key] = (score, specificity, lambda_code, stub_signature)
+                    selected[key] = (score, specificity, lambda_code, stub_signature, func.get("doc"))
 
         for name, key in selected_order:
-            _score, specificity, lambda_code, stub_signature = selected[key]
-            grouped.setdefault(name, []).append((specificity, lambda_code, stub_signature))
+            _score, specificity, lambda_code, stub_signature, doc = selected[key]
+            grouped.setdefault(name, []).append((specificity, lambda_code, stub_signature, doc))
 
         lines: list[str] = []
         owner = stub_owner_for_table_var(table_var)
         for name, items in grouped.items():
             sorted_items = sorted(items, key=lambda item: item[0])
-            for i, (_specificity, _lambda_code, stub_sig) in enumerate(sorted_items):
+            lines.extend(stub_doc_lines({"doc": first_stub_doc([item[3] for item in sorted_items])}))
+            for i, (_specificity, _lambda_code, stub_sig, _doc) in enumerate(sorted_items):
                 macro = "LUASF_STUB_FUNCTION" if i == 0 else "LUASF_STUB_OVERLOAD"
                 lines.append(
                     f'    {macro}({cpp_string_literal(owner)}, {cpp_string_literal(name)}, '
@@ -2035,17 +2116,18 @@ class Sol2Generator:
             f'    LUASF_STUB_VALUE({cpp_string_literal(owner)}, {cpp_string_literal(name)}, '
             f'{cpp_string_literal(type_ref_to_lua_type(type_ref))});'
         )
+        stub_lines = [*stub_doc_lines(item), stub_line]
         if is_window_handle(type_ref):
-            return [stub_line, f'    {table_var}["{name}"] = lua_sf::window_handle_to_integer({full_name});']
+            return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::window_handle_to_integer({full_name});']
         if is_sf_string(type_ref.cpp):
-            return [stub_line, f'    {table_var}["{name}"] = lua_sf::to_utf8_string({full_name});']
+            return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::to_utf8_string({full_name});']
         if is_filesystem_path(type_ref.cpp):
-            return [stub_line, f'    {table_var}["{name}"] = {full_name}.string();']
+            return [*stub_lines, f'    {table_var}["{name}"] = {full_name}.string();']
         if vector_element(type_ref.cpp):
-            return [stub_line, f'    {table_var}["{name}"] = sol::as_table({full_name});']
+            return [*stub_lines, f'    {table_var}["{name}"] = sol::as_table({full_name});']
         if optional_element(type_ref.cpp):
-            return [stub_line, f'    {table_var}["{name}"] = lua_sf::optional_to_object(lua, {full_name});']
-        return [stub_line, f'    {table_var}["{name}"] = {full_name};']
+            return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::optional_to_object(lua, {full_name});']
+        return [*stub_lines, f'    {table_var}["{name}"] = {full_name};']
 
 
 def parse_args() -> argparse.Namespace:
