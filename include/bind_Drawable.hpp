@@ -11,7 +11,7 @@ namespace lua_sf {
 class LuaDrawable : public sf::Drawable
 {
 public:
-    explicit LuaDrawable(sol::function drawCallback);
+    explicit LuaDrawable(sol::protected_function drawCallback);
 
 private:
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override;

@@ -2,7 +2,7 @@
 
 #include <utility>
 
-lua_sf::LuaDrawable::LuaDrawable(sol::function drawCallback) : m_drawCallback(std::move(drawCallback))
+lua_sf::LuaDrawable::LuaDrawable(sol::protected_function drawCallback) : m_drawCallback(std::move(drawCallback))
 {
 }
 
@@ -21,7 +21,7 @@ void bind_Drawable(sol::state_view lua)
     LUASF_STUB_FUNCTION("sf.LuaDrawable", "new", "fun(drawCallback: fun(target: sf.RenderTarget, states: sf.RenderStates)): sf.LuaDrawable");
     sf.new_usertype<lua_sf::LuaDrawable>(
         "LuaDrawable",
-        sol::constructors<lua_sf::LuaDrawable(sol::function)>(),
+        sol::constructors<lua_sf::LuaDrawable(sol::protected_function)>(),
         sol::base_classes,
         sol::bases<sf::Drawable>());
 }
