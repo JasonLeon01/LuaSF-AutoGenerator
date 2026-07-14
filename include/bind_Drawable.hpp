@@ -8,15 +8,14 @@
 
 namespace lua_sf {
 
-class LuaDrawable : public sf::Drawable
-{
+class LuaDrawable : public sf::Drawable {
 public:
-    explicit LuaDrawable(sol::protected_function drawCallback);
+  explicit LuaDrawable(sol::protected_function drawCallback);
 
 private:
-    void draw(sf::RenderTarget& target, sf::RenderStates states) const override;
+  void draw(sf::RenderTarget &target, sf::RenderStates states) const override;
 
-    sol::protected_function m_drawCallback;
+  sol::protected_function m_drawCallback;
 };
 
 } // namespace lua_sf

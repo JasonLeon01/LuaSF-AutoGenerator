@@ -11,7 +11,8 @@
 namespace lua_sf {
 
 template <std::size_t N>
-void bind_MatrixT(sol::state_view lua, sol::table sfTable, const std::string& name);
+void bind_MatrixT(sol::state_view lua, sol::table sfTable,
+                  const std::string &name);
 
 } // namespace lua_sf
 

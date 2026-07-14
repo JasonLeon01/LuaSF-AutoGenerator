@@ -578,6 +578,7 @@ MANUAL_DEPENDENCIES: dict[str, set[str]] = {
     "bind_Event": {"bind_Vector", "bind_Joystick", "bind_Keyboard", "bind_Mouse", "bind_Sensor"},
     "bind_Handle": set(),
     "bind_Drawable": set(),
+    "bind_ClassSupport": {"bind_Sprite"},
 }
 
 MANUAL_HEADER_OWNERS: dict[str, str] = {

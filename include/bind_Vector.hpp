@@ -12,13 +12,13 @@
 namespace lua_sf {
 
 template <typename T>
-void bind_Vector2T(sol::table sfTable, const std::string& name);
+void bind_Vector2T(sol::table sfTable, const std::string &name);
 
 template <typename T>
-void bind_Vector3T(sol::table sfTable, const std::string& name);
+void bind_Vector3T(sol::table sfTable, const std::string &name);
 
 template <typename T>
-void bind_Vector4T(sol::table sfTable, const std::string& name);
+void bind_Vector4T(sol::table sfTable, const std::string &name);
 
 } // namespace lua_sf
 

@@ -577,6 +577,11 @@ def lua_path_for_type(qualified_name: str) -> str:
     return qualified_name.replace("::", ".")
 
 
+def lua_table_expression(qualified_name: str) -> str:
+    path = lua_path_for_type(qualified_name)
+    return "lua" + "".join(f"[{cpp_string_literal(part)}]" for part in path.split(".")) + ".get<sol::table>()"
+
+
 def lua_leaf_for_type(qualified_name: str) -> str:
     qualified_name = clean_cpp_type(qualified_name)
     return qualified_name.rsplit("::", 1)[-1]
@@ -1374,6 +1379,7 @@ class Sol2Generator:
         lua_name = lua_leaf_for_type(full_name)
         lua_path = lua_path_for_type(full_name)
         var_name = f"type_{sanitize_identifier(full_name)}"
+        direct_bases = self._direct_base_type_names(cls, full_name)
         bases = self._base_type_names_for_binding(cls, full_name)
         if bases:
             lines = [
@@ -1387,6 +1393,12 @@ class Sol2Generator:
 
         nested_table_var = f"table_{sanitize_identifier(full_name)}"
         lines.append(f'    sol::table {nested_table_var} = {table_var}["{lua_name}"].get<sol::table>();')
+        if direct_bases:
+            native_bases_var = f"native_bases_{sanitize_identifier(full_name)}"
+            lines.append(f"    sol::table {native_bases_var} = lua.create_table();")
+            for base in direct_bases:
+                lines.append(f"    {native_bases_var}.add({lua_table_expression(base)});")
+            lines.append(f'    {nested_table_var}.raw_set("__nativeBases", {native_bases_var});')
         lines.extend(stub_doc_lines(cls))
         if bases:
             bases_lua = ", ".join(lua_path_for_type(base) for base in bases)
@@ -1461,6 +1473,14 @@ class Sol2Generator:
                 f'{cpp_string_literal(type_ref_to_lua_type(type_ref))});'
             )
         return lines
+
+    def _direct_base_type_names(self, cls: dict[str, Any], full_name: str) -> list[str]:
+        bases: list[str] = []
+        for base in cls.get("base_classes", []):
+            if base.get("access") not in (None, "public") or not base.get("name"):
+                continue
+            bases.append(clean_cpp_type(qualify_relative_type(base["name"], full_name)))
+        return bases
 
     def _base_type_names_for_binding(
         self,
