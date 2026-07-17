@@ -168,7 +168,6 @@ function(luasf_configure_binding_target target_name output_dir archive_dir)
     target_compile_definitions("${{target_name}}" PRIVATE
         $<$<CONFIG:Debug>:SOL_ALL_SAFETIES_ON=1>
         SOL_SAFE_NUMERICS=1
-        $<$<NOT:$<CONFIG:Debug>>:SOL_NO_CHECK_NUMBER_PRECISION=1>
         SOL_USE_INTEROP=1
         SOL_DEFAULT_AUTOMAGICAL_USERTYPES=0
         SOL_USERTYPE_TYPE_BINDING_INFO=0

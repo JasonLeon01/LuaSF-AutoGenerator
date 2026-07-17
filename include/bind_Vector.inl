@@ -21,22 +21,42 @@ std::string vector_to_string(const std::string &name, const Vector &self) {
 template <typename T>
 void bind_Vector2T(sol::table sfTable, const std::string &name) {
   using Vector = sf::Vector2<T>;
+  using Scalar = LuaNumeric<T>;
 
   auto type = sfTable.new_usertype<Vector>(name.c_str(), sol::no_constructor);
   if constexpr (std::is_floating_point_v<T>) {
     type.set_function(
         "new",
         sol::factories([] { return Vector{}; },
-                       [](T x, T y) { return Vector{x, y}; },
-                       [](T r, sf::Angle phi) { return Vector{r, phi}; }));
+                       [](Scalar x, Scalar y) {
+                         return Vector{unwrapLuaNumeric<T>(x),
+                                       unwrapLuaNumeric<T>(y)};
+                       },
+                       [](Scalar r, sf::Angle phi) {
+                         return Vector{unwrapLuaNumeric<T>(r), phi};
+                       }));
   } else {
-    type.set_function("new",
-                      sol::factories([] { return Vector{}; },
-                                     [](T x, T y) { return Vector{x, y}; }));
+    type.set_function(
+        "new", sol::factories([] { return Vector{}; },
+                               [](Scalar x, Scalar y) {
+                                 return Vector{unwrapLuaNumeric<T>(x),
+                                               unwrapLuaNumeric<T>(y)};
+                               }));
   }
 
-  type["x"] = &Vector::x;
-  type["y"] = &Vector::y;
+  if constexpr (is_lua_integral_v<T>) {
+    type.set("x", sol::property([](const Vector &self) { return self.x; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.x = value.value();
+                                }));
+    type.set("y", sol::property([](const Vector &self) { return self.y; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.y = value.value();
+                                }));
+  } else {
+    type["x"] = &Vector::x;
+    type["y"] = &Vector::y;
+  }
   type.set_function("unpack", [](const Vector &self) {
     return std::make_tuple(self.x, self.y);
   });
@@ -70,10 +90,14 @@ void bind_Vector2T(sol::table sfTable, const std::string &name) {
       return left - right;
     };
     type[sol::meta_function::multiplication] =
-        sol::overload([](Vector left, T right) { return left * right; },
-                      [](T left, Vector right) { return left * right; });
-    type[sol::meta_function::division] = [](Vector left, T right) {
-      return left / right;
+        sol::overload([](Vector left, Scalar right) {
+                        return left * unwrapLuaNumeric<T>(right);
+                      },
+                      [](Scalar left, Vector right) {
+                        return unwrapLuaNumeric<T>(left) * right;
+                      });
+    type[sol::meta_function::division] = [](Vector left, Scalar right) {
+      return left / unwrapLuaNumeric<T>(right);
     };
   }
 
@@ -98,14 +122,34 @@ void bind_Vector2T(sol::table sfTable, const std::string &name) {
 template <typename T>
 void bind_Vector3T(sol::table sfTable, const std::string &name) {
   using Vector = sf::Vector3<T>;
+  using Scalar = LuaNumeric<T>;
 
   auto type = sfTable.new_usertype<Vector>(name.c_str(), sol::no_constructor);
   type.set_function(
       "new", sol::factories([] { return Vector{}; },
-                            [](T x, T y, T z) { return Vector{x, y, z}; }));
-  type["x"] = &Vector::x;
-  type["y"] = &Vector::y;
-  type["z"] = &Vector::z;
+                            [](Scalar x, Scalar y, Scalar z) {
+                              return Vector{unwrapLuaNumeric<T>(x),
+                                            unwrapLuaNumeric<T>(y),
+                                            unwrapLuaNumeric<T>(z)};
+                            }));
+  if constexpr (is_lua_integral_v<T>) {
+    type.set("x", sol::property([](const Vector &self) { return self.x; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.x = value.value();
+                                }));
+    type.set("y", sol::property([](const Vector &self) { return self.y; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.y = value.value();
+                                }));
+    type.set("z", sol::property([](const Vector &self) { return self.z; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.z = value.value();
+                                }));
+  } else {
+    type["x"] = &Vector::x;
+    type["y"] = &Vector::y;
+    type["z"] = &Vector::z;
+  }
   type.set_function("unpack", [](const Vector &self) {
     return std::make_tuple(self.x, self.y, self.z);
   });
@@ -140,10 +184,14 @@ void bind_Vector3T(sol::table sfTable, const std::string &name) {
     type[sol::meta_function::subtraction] =
         [](const Vector &left, const Vector &right) { return left - right; };
     type[sol::meta_function::multiplication] =
-        sol::overload([](const Vector &left, T right) { return left * right; },
-                      [](T left, const Vector &right) { return left * right; });
-    type[sol::meta_function::division] = [](const Vector &left, T right) {
-      return left / right;
+        sol::overload([](const Vector &left, Scalar right) {
+                        return left * unwrapLuaNumeric<T>(right);
+                      },
+                      [](Scalar left, const Vector &right) {
+                        return unwrapLuaNumeric<T>(left) * right;
+                      });
+    type[sol::meta_function::division] = [](const Vector &left, Scalar right) {
+      return left / unwrapLuaNumeric<T>(right);
     };
   }
 
@@ -158,25 +206,54 @@ void bind_Vector3T(sol::table sfTable, const std::string &name) {
 template <typename T>
 void bind_Vector4T(sol::table sfTable, const std::string &name) {
   using Vector = sf::priv::Vector4<T>;
+  using Scalar = LuaNumeric<T>;
 
   auto type = sfTable.new_usertype<Vector>(name.c_str(), sol::no_constructor);
   if constexpr (std::is_same_v<T, float> || std::is_same_v<T, int>) {
     type.set_function(
         "new",
         sol::factories([] { return Vector{}; },
-                       [](T x, T y, T z, T w) { return Vector{x, y, z, w}; },
+                       [](Scalar x, Scalar y, Scalar z, Scalar w) {
+                         return Vector{unwrapLuaNumeric<T>(x),
+                                       unwrapLuaNumeric<T>(y),
+                                       unwrapLuaNumeric<T>(z),
+                                       unwrapLuaNumeric<T>(w)};
+                       },
                        [](sf::Color color) { return Vector{color}; }));
   } else {
-    type.set_function("new", sol::factories([] { return Vector{}; },
-                                            [](T x, T y, T z, T w) {
-                                              return Vector{x, y, z, w};
-                                            }));
+    type.set_function(
+        "new", sol::factories([] { return Vector{}; },
+                               [](Scalar x, Scalar y, Scalar z, Scalar w) {
+                                 return Vector{unwrapLuaNumeric<T>(x),
+                                               unwrapLuaNumeric<T>(y),
+                                               unwrapLuaNumeric<T>(z),
+                                               unwrapLuaNumeric<T>(w)};
+                               }));
   }
 
-  type["x"] = &Vector::x;
-  type["y"] = &Vector::y;
-  type["z"] = &Vector::z;
-  type["w"] = &Vector::w;
+  if constexpr (is_lua_integral_v<T>) {
+    type.set("x", sol::property([](const Vector &self) { return self.x; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.x = value.value();
+                                }));
+    type.set("y", sol::property([](const Vector &self) { return self.y; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.y = value.value();
+                                }));
+    type.set("z", sol::property([](const Vector &self) { return self.z; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.z = value.value();
+                                }));
+    type.set("w", sol::property([](const Vector &self) { return self.w; },
+                                [](Vector &self, LuaIntegral<T> value) {
+                                  self.w = value.value();
+                                }));
+  } else {
+    type["x"] = &Vector::x;
+    type["y"] = &Vector::y;
+    type["z"] = &Vector::z;
+    type["w"] = &Vector::w;
+  }
   type.set_function("unpack", [](const Vector &self) {
     return std::make_tuple(self.x, self.y, self.z, self.w);
   });

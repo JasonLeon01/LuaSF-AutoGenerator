@@ -12,11 +12,16 @@ void bind_Handle(sol::state_view lua) {
                       "fun(self: sf.WindowHandle): integer");
 
   auto type_sf__WindowHandle = sf.new_usertype<lua_sf::WindowHandle>(
-      "WindowHandle", sol::constructors<lua_sf::WindowHandle(std::uintptr_t),
-                                        lua_sf::WindowHandle()>());
-  type_sf__WindowHandle.set_function("fromInteger", [](std::uintptr_t value) {
-    return lua_sf::WindowHandle(value);
-  });
+      "WindowHandle", sol::no_constructor);
+  type_sf__WindowHandle.set_function(
+      "new", sol::factories([] { return lua_sf::WindowHandle(); },
+                            [](lua_sf::LuaIntegral<std::uintptr_t> value) {
+                              return lua_sf::WindowHandle(value.value());
+                            }));
+  type_sf__WindowHandle.set_function(
+      "fromInteger", [](lua_sf::LuaIntegral<std::uintptr_t> value) {
+        return lua_sf::WindowHandle(value.value());
+      });
   type_sf__WindowHandle.set_function(
       "toInteger", [](const lua_sf::WindowHandle &self) -> std::uintptr_t {
         return self.toInteger();

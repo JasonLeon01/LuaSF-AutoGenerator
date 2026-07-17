@@ -389,6 +389,8 @@ def lua_param_type(type_ref: TypeRef) -> str:
     base = remove_cvref(cpp)
     if is_window_handle(type_ref):
         return "const lua_sf::WindowHandle&"
+    if base in INTEGER_TYPES:
+        return f"lua_sf::LuaIntegral<{base}>"
     if is_std_function(type_ref):
         return "sol::object"
     if is_sf_string(cpp) or is_filesystem_path(cpp) or is_string_view(cpp) or is_std_string(cpp) or is_std_wstring(cpp):
@@ -402,8 +404,11 @@ def lua_param_type(type_ref: TypeRef) -> str:
 
 def from_lua_expr(type_ref: TypeRef, name: str) -> tuple[list[str], str]:
     cpp = type_ref.cpp
+    base = remove_cvref(cpp)
     if is_window_handle(type_ref):
         return [], f"{name}.native()"
+    if base in INTEGER_TYPES:
+        return [], f"{name}.value()"
     signature = std_function_signature(type_ref)
     if signature:
         return [], f"lua_sf::function_from_object<{signature}>({name})"
@@ -632,6 +637,8 @@ def cpp_type_to_lua_type(value: str) -> str:
 
     if not base or base == "void":
         return "nil"
+    if is_template(base, "lua_sf::LuaIntegral"):
+        return "integer"
     if base in {"bool"}:
         return "boolean"
     if base in INTEGER_TYPES:
@@ -1455,7 +1462,13 @@ class Sol2Generator:
         return [
             *stub_doc_lines(item),
             f'    LUASF_STUB_ALIAS({cpp_string_literal(alias_lua)}, {cpp_string_literal(target_lua)});',
-            f'    {table_var}["{name}"] = {table_var}["{target_leaf}"];',
+            "    {",
+            f'        const sol::object aliasValue = {table_var}.raw_get<sol::object>("{name}");',
+            f'        const sol::object aliasTarget = {table_var}.raw_get<sol::object>("{target_leaf}");',
+            "        if ((!aliasValue.valid() || aliasValue.get_type() == sol::type::nil) &&",
+            "            aliasTarget.valid() && aliasTarget.get_type() != sol::type::nil)",
+            f'            {table_var}.raw_set("{name}", aliasTarget);',
+            "    }",
         ]
 
     def _stub_field_lines(self, cls: dict[str, Any]) -> list[str]:
@@ -1653,7 +1666,7 @@ class Sol2Generator:
             if should_skip_type(type_ref):
                 lines.append(f"    // Skipped field {full_name}::{field_name}: unsupported type {type_ref.cpp}")
                 continue
-            if return_needs_wrapper(type_ref):
+            if return_needs_wrapper(type_ref) or remove_cvref(type_ref.cpp) in INTEGER_TYPES:
                 getter_capture = "[lua]" if return_wrapper_uses_lua(type_ref) else "[]"
                 if is_window_handle(type_ref):
                     getter_return = " -> lua_sf::WindowHandle"

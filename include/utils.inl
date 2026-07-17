@@ -11,6 +11,93 @@ template <typename T>
 inline constexpr bool is_std_vector_v =
     is_std_vector<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
+template <typename T>
+T unwrapLuaNumeric(const LuaNumeric<T> &value) {
+  if constexpr (is_lua_integral_v<T>)
+    return value.value();
+  else
+    return value;
+}
+
+template <typename T> bool luaIntegerFits(lua_Integer value) {
+  static_assert(is_lua_integral_v<T>);
+  if constexpr (std::is_signed_v<T>) {
+    if constexpr (std::numeric_limits<T>::digits >=
+                  std::numeric_limits<lua_Integer>::digits) {
+      return true;
+    } else {
+      return value >= static_cast<lua_Integer>(std::numeric_limits<T>::min()) &&
+             value <= static_cast<lua_Integer>(std::numeric_limits<T>::max());
+    }
+  } else {
+    if (value < 0)
+      return false;
+    using LuaUnsigned = std::make_unsigned_t<lua_Integer>;
+    if constexpr (std::numeric_limits<T>::digits >=
+                  std::numeric_limits<LuaUnsigned>::digits) {
+      return true;
+    } else {
+      return static_cast<LuaUnsigned>(value) <=
+             static_cast<LuaUnsigned>(std::numeric_limits<T>::max());
+    }
+  }
+}
+
+template <typename T>
+bool tryReadLuaIntegral(lua_State *state, int index, T &value) {
+  static_assert(is_lua_integral_v<T>);
+  if (lua_type(state, index) != LUA_TNUMBER)
+    return false;
+
+  if (lua_isinteger(state, index)) {
+    const lua_Integer integer = lua_tointeger(state, index);
+    if (!luaIntegerFits<T>(integer))
+      return false;
+
+    value = static_cast<T>(integer);
+    return true;
+  }
+
+  const lua_Number number = lua_tonumber(state, index);
+  if (!std::isfinite(number) || std::trunc(number) != number)
+    return false;
+
+  constexpr int valueBits = std::numeric_limits<T>::digits;
+  const lua_Number upperBound = std::ldexp(lua_Number{1}, valueBits);
+  if constexpr (std::is_signed_v<T>) {
+    if (number < -upperBound || number >= upperBound)
+      return false;
+  } else if (number < lua_Number{0} || number >= upperBound) {
+    return false;
+  }
+
+  value = static_cast<T>(number);
+  return true;
+}
+
+template <typename T, typename Handler>
+bool sol_lua_check(sol::types<LuaIntegral<T>>, lua_State *state, int index,
+                   Handler &&handler, sol::stack::record &tracking) {
+  tracking.use(1);
+  T value{};
+  const bool success = tryReadLuaIntegral(state, index, value);
+  if (!success) {
+    handler(state, index, sol::type::number, sol::type_of(state, index),
+            "expected a finite, in-range integer value");
+  }
+  return success;
+}
+
+template <typename T>
+LuaIntegral<T> sol_lua_get(sol::types<LuaIntegral<T>>, lua_State *state,
+                           int index, sol::stack::record &tracking) {
+  tracking.use(1);
+  T value{};
+  if (!tryReadLuaIntegral(state, index, value))
+    luaL_error(state, "expected a finite, in-range integer value");
+  return LuaIntegral<T>(value);
+}
+
 inline bool is_nil_object(const sol::object &object) {
   return !object.valid() || object == LUASF_SOL_NIL;
 }
@@ -137,8 +224,11 @@ template <typename T> T object_as(const sol::object &object) {
     return to_sf_string(object.as<std::string>());
   } else if constexpr (std::is_same_v<U, std::filesystem::path>) {
     return std::filesystem::path(object.as<std::string>());
+  } else if constexpr (is_lua_integral_v<U>) {
+    return object.as<LuaIntegral<U>>().value();
   } else if constexpr (std::is_same_v<U, std::byte>) {
-    return static_cast<std::byte>(object.as<unsigned int>());
+    return static_cast<std::byte>(
+        object.as<LuaIntegral<unsigned int>>().value());
   } else {
     return object.as<U>();
   }
@@ -153,7 +243,8 @@ std::vector<T> array_from_object(const sol::object &object) {
 
     if constexpr (is_byte_like_v<T>) {
       for (const auto &entry : table)
-        values.push_back(static_cast<T>(entry.second.as<unsigned int>()));
+        values.push_back(static_cast<T>(
+            object_as<unsigned int>(entry.second.as<sol::object>())));
       return values;
     }
 
@@ -318,7 +409,7 @@ inline void updateAudioFrameCount(const sol::object &object,
   if (is_nil_object(object))
     return;
 
-  frameCount = std::min(object.as<unsigned int>(), frameCapacity);
+  frameCount = std::min(object_as<unsigned int>(object), frameCapacity);
 }
 
 template <typename Signature> struct function_converter;

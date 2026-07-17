@@ -11,11 +11,13 @@
 #include "lua_stub.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -98,6 +100,43 @@ inline constexpr bool is_byte_like_v =
     std::is_same_v<std::remove_cv_t<T>, std::byte> ||
     std::is_same_v<std::remove_cv_t<T>, std::uint8_t> ||
     std::is_same_v<std::remove_cv_t<T>, unsigned char>;
+
+template <typename T>
+inline constexpr bool is_lua_integral_v =
+    std::is_integral_v<std::remove_cv_t<std::remove_reference_t<T>>> &&
+    !std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, bool>;
+
+template <typename T> class LuaIntegral {
+public:
+  using value_type = T;
+
+  LuaIntegral() = default;
+  explicit LuaIntegral(T value) : value_(value) {}
+
+  [[nodiscard]] T value() const noexcept { return value_; }
+  explicit operator T() const noexcept { return value_; }
+
+private:
+  T value_{};
+};
+
+template <typename T>
+using LuaNumeric =
+    std::conditional_t<is_lua_integral_v<T>, LuaIntegral<T>, T>;
+
+template <typename T>
+T unwrapLuaNumeric(const LuaNumeric<T> &value);
+
+template <typename T>
+bool tryReadLuaIntegral(lua_State *state, int index, T &value);
+
+template <typename T, typename Handler>
+bool sol_lua_check(sol::types<LuaIntegral<T>>, lua_State *state, int index,
+                   Handler &&handler, sol::stack::record &tracking);
+
+template <typename T>
+LuaIntegral<T> sol_lua_get(sol::types<LuaIntegral<T>>, lua_State *state,
+                           int index, sol::stack::record &tracking);
 
 template <typename T> T object_as(const sol::object &object);
 

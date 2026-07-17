@@ -71,6 +71,27 @@ void bind_empty_event_subtype(sol::table sf, const char *name) {
   sf.new_usertype<T>(name, sol::constructors<T()>());
 }
 
+template <typename UserType, typename EventType, typename FieldType>
+void bind_event_field(UserType &type, const char *name,
+                      FieldType EventType::*field) {
+  if constexpr (lua_sf::is_lua_integral_v<FieldType>) {
+    using LuaFieldType =
+        std::conditional_t<std::is_signed_v<FieldType>, std::int64_t,
+                           std::uint64_t>;
+    type.set(
+        name,
+        sol::property(
+            [field](const EventType &self) {
+              return static_cast<LuaFieldType>(self.*field);
+            },
+            [field](EventType &self, lua_sf::LuaIntegral<FieldType> value) {
+              self.*field = value.value();
+            }));
+  } else {
+    type[name] = field;
+  }
+}
+
 } // namespace
 
 void bind_Event(sol::state_view lua) {
@@ -111,14 +132,7 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_TextEntered");
   auto textEntered = sf.new_usertype<sf::Event::TextEntered>(
       "Event_TextEntered", sol::constructors<sf::Event::TextEntered()>());
-  textEntered.set("unicode",
-                  sol::property(
-                      [](const sf::Event::TextEntered &self) {
-                        return static_cast<std::uint32_t>(self.unicode);
-                      },
-                      [](sf::Event::TextEntered &self, std::uint32_t value) {
-                        self.unicode = static_cast<char32_t>(value);
-                      }));
+  bind_event_field(textEntered, "unicode", &sf::Event::TextEntered::unicode);
 
   LUASF_STUB_CLASS("sf.Event_KeyPressed");
   LUASF_STUB_FIELD("code", "sf.Keyboard.Key");
@@ -216,9 +230,10 @@ void bind_Event(sol::state_view lua) {
       sf.new_usertype<sf::Event::JoystickButtonPressed>(
           "Event_JoystickButtonPressed",
           sol::constructors<sf::Event::JoystickButtonPressed()>());
-  joystickButtonPressed["joystickId"] =
-      &sf::Event::JoystickButtonPressed::joystickId;
-  joystickButtonPressed["button"] = &sf::Event::JoystickButtonPressed::button;
+  bind_event_field(joystickButtonPressed, "joystickId",
+                   &sf::Event::JoystickButtonPressed::joystickId);
+  bind_event_field(joystickButtonPressed, "button",
+                   &sf::Event::JoystickButtonPressed::button);
 
   LUASF_STUB_CLASS("sf.Event_JoystickButtonReleased");
   LUASF_STUB_FIELD("joystickId", "integer");
@@ -229,9 +244,10 @@ void bind_Event(sol::state_view lua) {
       sf.new_usertype<sf::Event::JoystickButtonReleased>(
           "Event_JoystickButtonReleased",
           sol::constructors<sf::Event::JoystickButtonReleased()>());
-  joystickButtonReleased["joystickId"] =
-      &sf::Event::JoystickButtonReleased::joystickId;
-  joystickButtonReleased["button"] = &sf::Event::JoystickButtonReleased::button;
+  bind_event_field(joystickButtonReleased, "joystickId",
+                   &sf::Event::JoystickButtonReleased::joystickId);
+  bind_event_field(joystickButtonReleased, "button",
+                   &sf::Event::JoystickButtonReleased::button);
 
   LUASF_STUB_CLASS("sf.Event_JoystickMoved");
   LUASF_STUB_FIELD("joystickId", "integer");
@@ -241,7 +257,8 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_JoystickMoved");
   auto joystickMoved = sf.new_usertype<sf::Event::JoystickMoved>(
       "Event_JoystickMoved", sol::constructors<sf::Event::JoystickMoved()>());
-  joystickMoved["joystickId"] = &sf::Event::JoystickMoved::joystickId;
+  bind_event_field(joystickMoved, "joystickId",
+                   &sf::Event::JoystickMoved::joystickId);
   joystickMoved["axis"] = &sf::Event::JoystickMoved::axis;
   joystickMoved["position"] = &sf::Event::JoystickMoved::position;
 
@@ -252,7 +269,8 @@ void bind_Event(sol::state_view lua) {
   auto joystickConnected = sf.new_usertype<sf::Event::JoystickConnected>(
       "Event_JoystickConnected",
       sol::constructors<sf::Event::JoystickConnected()>());
-  joystickConnected["joystickId"] = &sf::Event::JoystickConnected::joystickId;
+  bind_event_field(joystickConnected, "joystickId",
+                   &sf::Event::JoystickConnected::joystickId);
 
   LUASF_STUB_CLASS("sf.Event_JoystickDisconnected");
   LUASF_STUB_FIELD("joystickId", "integer");
@@ -261,8 +279,8 @@ void bind_Event(sol::state_view lua) {
   auto joystickDisconnected = sf.new_usertype<sf::Event::JoystickDisconnected>(
       "Event_JoystickDisconnected",
       sol::constructors<sf::Event::JoystickDisconnected()>());
-  joystickDisconnected["joystickId"] =
-      &sf::Event::JoystickDisconnected::joystickId;
+  bind_event_field(joystickDisconnected, "joystickId",
+                   &sf::Event::JoystickDisconnected::joystickId);
 
   LUASF_STUB_CLASS("sf.Event_TouchBegan");
   LUASF_STUB_FIELD("finger", "integer");
@@ -271,7 +289,7 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_TouchBegan");
   auto touchBegan = sf.new_usertype<sf::Event::TouchBegan>(
       "Event_TouchBegan", sol::constructors<sf::Event::TouchBegan()>());
-  touchBegan["finger"] = &sf::Event::TouchBegan::finger;
+  bind_event_field(touchBegan, "finger", &sf::Event::TouchBegan::finger);
   touchBegan["position"] = &sf::Event::TouchBegan::position;
 
   LUASF_STUB_CLASS("sf.Event_TouchMoved");
@@ -281,7 +299,7 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_TouchMoved");
   auto touchMoved = sf.new_usertype<sf::Event::TouchMoved>(
       "Event_TouchMoved", sol::constructors<sf::Event::TouchMoved()>());
-  touchMoved["finger"] = &sf::Event::TouchMoved::finger;
+  bind_event_field(touchMoved, "finger", &sf::Event::TouchMoved::finger);
   touchMoved["position"] = &sf::Event::TouchMoved::position;
 
   LUASF_STUB_CLASS("sf.Event_TouchEnded");
@@ -291,7 +309,7 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_TouchEnded");
   auto touchEnded = sf.new_usertype<sf::Event::TouchEnded>(
       "Event_TouchEnded", sol::constructors<sf::Event::TouchEnded()>());
-  touchEnded["finger"] = &sf::Event::TouchEnded::finger;
+  bind_event_field(touchEnded, "finger", &sf::Event::TouchEnded::finger);
   touchEnded["position"] = &sf::Event::TouchEnded::position;
 
   LUASF_STUB_CLASS("sf.Event_SensorChanged");

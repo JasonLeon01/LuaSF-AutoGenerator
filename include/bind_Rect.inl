@@ -8,6 +8,7 @@ template <typename T>
 void bind_RectT(sol::state_view lua, sol::table sfTable,
                 const std::string &name) {
   using Rect = sf::Rect<T>;
+  using Scalar = LuaNumeric<T>;
   using Vector = sf::Vector2<T>;
 
   auto type = sfTable.new_usertype<Rect>(name.c_str(), sol::no_constructor);
@@ -15,9 +16,13 @@ void bind_RectT(sol::state_view lua, sol::table sfTable,
                                           [](Vector position, Vector size) {
                                             return Rect{position, size};
                                           },
-                                          [](T x, T y, T width, T height) {
-                                            return Rect{{x, y},
-                                                        {width, height}};
+                                          [](Scalar x, Scalar y, Scalar width,
+                                             Scalar height) {
+                                            return Rect{
+                                                {unwrapLuaNumeric<T>(x),
+                                                 unwrapLuaNumeric<T>(y)},
+                                                {unwrapLuaNumeric<T>(width),
+                                                 unwrapLuaNumeric<T>(height)}};
                                           }));
   type["position"] = &Rect::position;
   type["size"] = &Rect::size;
