@@ -1072,19 +1072,44 @@ def make_lambda(
     return "\n".join(lines), None
 
 
-def overload_block(name: str, lambdas: list[str], indent: str, target: str = "set_function") -> list[str]:
+def overload_block(
+    name: str,
+    lambdas: list[str],
+    indent: str,
+    target: str = "set_function",
+    self_dependency: bool = False,
+) -> list[str]:
     if not lambdas:
         return []
     if len(lambdas) == 1:
         lines = [f'{indent}{target}("{name}",']
-        append_indented_block(lines, lambdas[0], indent + "    ")
+        if self_dependency:
+            lines.append(f"{indent}    sol::policies(")
+            append_indented_block(lines, lambdas[0], indent + "        ", ",")
+            lines.append(f"{indent}        sol::self_dependency{{}}")
+            lines.append(f"{indent}    )")
+        else:
+            append_indented_block(lines, lambdas[0], indent + "    ")
         lines.append(f"{indent});")
         return lines
-    lines = [f'{indent}{target}("{name}", sol::overload(']
+    lines = [f'{indent}{target}("{name}",']
+    if self_dependency:
+        lines.append(f"{indent}    sol::policies(")
+        lines.append(f"{indent}        sol::overload(")
+        lambda_indent = indent + "            "
+    else:
+        lines.append(f"{indent}    sol::overload(")
+        lambda_indent = indent + "        "
     for index, lambda_code in enumerate(lambdas):
         suffix = "," if index + 1 < len(lambdas) else ""
-        append_indented_block(lines, lambda_code, indent + "    ", suffix)
-    lines.append(f"{indent}));")
+        append_indented_block(lines, lambda_code, lambda_indent, suffix)
+    if self_dependency:
+        lines.append(f"{indent}        ),")
+        lines.append(f"{indent}        sol::self_dependency{{}}")
+        lines.append(f"{indent}    )")
+    else:
+        lines.append(f"{indent}    )")
+    lines.append(f"{indent});")
     return lines
 
 
@@ -1157,17 +1182,35 @@ def shader_uniform_array_block(var_name: str, lua_owner: str) -> list[str]:
     return lines
 
 
-def meta_assignment_block(var_name: str, meta_function: str, lambdas: list[str], indent: str = "    ") -> list[str]:
+def meta_assignment_block(
+    var_name: str,
+    meta_function: str,
+    lambdas: list[str],
+    indent: str = "    ",
+    self_dependency: bool = False,
+) -> list[str]:
     if not lambdas:
         return []
     lines = [f"{indent}{var_name}[sol::meta_function::{meta_function}] ="]
+    value_indent = indent + "    "
+    if self_dependency:
+        lines.append(f"{value_indent}sol::policies(")
+        value_indent += "    "
     if len(lambdas) == 1:
-        append_indented_block(lines, lambdas[0], indent + "    ")
+        append_indented_block(
+            lines,
+            lambdas[0],
+            value_indent,
+            "," if self_dependency else "",
+        )
     else:
-        lines.append(f"{indent}    sol::overload(")
+        lines.append(f"{value_indent}sol::overload(")
         for index, lambda_code in enumerate(lambdas):
             suffix = "," if index + 1 < len(lambdas) else ""
-            append_indented_block(lines, lambda_code, indent + "        ", suffix)
+            append_indented_block(lines, lambda_code, value_indent + "    ", suffix)
+        lines.append(f"{value_indent})" + ("," if self_dependency else ""))
+    if self_dependency:
+        lines.append(f"{value_indent}sol::self_dependency{{}}")
         lines.append(f"{indent}    )")
     lines.append(f"{indent};")
     return lines
@@ -1697,13 +1740,40 @@ class Sol2Generator:
                     append_indented_block(lines, setter, "        ")
                     lines.append("    ));")
             else:
-                lines.append(f'    {var_name}["{field_name}"] = &{full_name}::{field_name};')
+                lines.append(
+                    f'    {var_name}["{field_name}"] = sol::policies('
+                    f'&{full_name}::{field_name}, sol::self_dependency{{}});'
+                )
         return lines
 
     def _emit_methods(self, cls: dict[str, Any], var_name: str, full_name: str) -> list[str]:
-        grouped: dict[str, list[tuple[tuple[int, int, int, int], str, StubSignature, bool, str | None]]] = {}
+        grouped: dict[
+            str,
+            list[
+                tuple[
+                    tuple[int, int, int, int],
+                    str,
+                    StubSignature,
+                    bool,
+                    str | None,
+                    bool,
+                ]
+            ],
+        ] = {}
         skipped_lines: list[str] = []
-        selected: dict[tuple[str, tuple[str, ...], bool], tuple[int, int, tuple[int, int, int, int], str, StubSignature, bool, str | None]] = {}
+        selected: dict[
+            tuple[str, tuple[str, ...], bool],
+            tuple[
+                int,
+                int,
+                tuple[int, int, int, int],
+                str,
+                StubSignature,
+                bool,
+                str | None,
+                bool,
+            ],
+        ] = {}
         selected_order: list[tuple[str, tuple[str, tuple[str, ...], bool]]] = []
         lua_owner = lua_path_for_type(full_name)
         operator_methods: list[tuple[dict[str, Any], str]] = []
@@ -1752,24 +1822,73 @@ class Sol2Generator:
                     score = len(planned.post_values)
                     priority = 0 if inherited else 1
                     is_static = bool(method.get("static"))
+                    returns_reference = (
+                        not is_static
+                        and is_reference(
+                            TypeRef.from_json(method_item.get("return_type")).cpp
+                        )
+                    )
                     specificity = overload_specificity_key(planned, overload_index)
                     overload_index += 1
                     current = selected.get(key)
                     if current is None:
-                        selected[key] = (score, priority, specificity, lambda_code, stub_signature, is_static, method.get("doc"))
+                        selected[key] = (
+                            score,
+                            priority,
+                            specificity,
+                            lambda_code,
+                            stub_signature,
+                            is_static,
+                            method.get("doc"),
+                            returns_reference,
+                        )
                         selected_order.append((name, key))
                     elif priority > current[1] or (priority == current[1] and score > current[0]):
-                        selected[key] = (score, priority, specificity, lambda_code, stub_signature, is_static, method.get("doc"))
+                        selected[key] = (
+                            score,
+                            priority,
+                            specificity,
+                            lambda_code,
+                            stub_signature,
+                            is_static,
+                            method.get("doc"),
+                            returns_reference,
+                        )
 
         for name, key in selected_order:
-            _score, _priority, specificity, lambda_code, stub_signature, is_static, doc = selected[key]
-            grouped.setdefault(name, []).append((specificity, lambda_code, stub_signature, is_static, doc))
+            (
+                _score,
+                _priority,
+                specificity,
+                lambda_code,
+                stub_signature,
+                is_static,
+                doc,
+                returns_reference,
+            ) = selected[key]
+            grouped.setdefault(name, []).append(
+                (
+                    specificity,
+                    lambda_code,
+                    stub_signature,
+                    is_static,
+                    doc,
+                    returns_reference,
+                )
+            )
 
         lines: list[str] = []
         for name, items in grouped.items():
             sorted_items = sorted(items, key=lambda item: item[0])
             lines.extend(stub_doc_lines({"doc": first_stub_doc([item[4] for item in sorted_items])}))
-            for i, (_specificity, _lambda_code, stub_sig, is_static, _doc) in enumerate(sorted_items):
+            for i, (
+                _specificity,
+                _lambda_code,
+                stub_sig,
+                is_static,
+                _doc,
+                _returns_reference,
+            ) in enumerate(sorted_items):
                 macro = "LUASF_STUB_FUNCTION" if i == 0 else "LUASF_STUB_OVERLOAD"
                 function_type = stub_fun_type(stub_sig, None if is_static else lua_owner)
                 lines.append(
@@ -1777,7 +1896,15 @@ class Sol2Generator:
                     f'{cpp_string_literal(function_type)});'
                 )
             lambdas = [item[1] for item in sorted_items]
-            lines.extend(overload_block(name, lambdas, "    ", f"{var_name}.set_function"))
+            lines.extend(
+                overload_block(
+                    name,
+                    lambdas,
+                    "    ",
+                    f"{var_name}.set_function",
+                    any(item[5] for item in sorted_items),
+                )
+            )
             if emit_shader_uniform_array and full_name == "sf::Shader" and name == "setUniform":
                 lines.extend(shader_uniform_array_block(var_name, lua_owner))
                 emit_shader_uniform_array = False
@@ -1796,7 +1923,7 @@ class Sol2Generator:
         skipped_lines: list[str],
     ) -> list[str]:
         lines: list[str] = []
-        selected: dict[tuple[str, tuple[str, ...]], tuple[int, str]] = {}
+        selected: dict[tuple[str, tuple[str, ...]], tuple[int, str, bool]] = {}
         selected_order: list[tuple[str, tuple[str, ...]]] = []
         write_candidates: dict[str, tuple[str, StubSignature, dict[str, Any]]] = {}
         read_methods: list[dict[str, Any]] = []
@@ -1837,11 +1964,18 @@ class Sol2Generator:
                     )
                     continue
                 key = (meta_function, planned.signature_key)
+                returns_reference = is_reference(
+                    TypeRef.from_json(method_item.get("return_type")).cpp
+                )
                 if key not in selected:
-                    selected[key] = (0 if dispatch_type != full_name else 1, lambda_code)
+                    selected[key] = (
+                        0 if dispatch_type != full_name else 1,
+                        lambda_code,
+                        returns_reference,
+                    )
                     selected_order.append(key)
                 elif selected[key][0] == 0 and dispatch_type == full_name:
-                    selected[key] = (1, lambda_code)
+                    selected[key] = (1, lambda_code, returns_reference)
 
                 if name == "operator<<" and len(params) == 1 and remove_cvref(TypeRef.from_json(method.get("return_type")).cpp) == full_name:
                     param_type = TypeRef.from_json(params[0].get("type"))
@@ -1852,10 +1986,20 @@ class Sol2Generator:
                             write_candidates[io_info["suffix"]] = (lambda_code, stub_signature, io_info)
 
         grouped_meta: dict[str, list[str]] = {}
+        dependent_meta: set[str] = set()
         for meta_function, signature_key in selected_order:
             grouped_meta.setdefault(meta_function, []).append(selected[(meta_function, signature_key)][1])
+            if selected[(meta_function, signature_key)][2]:
+                dependent_meta.add(meta_function)
         for meta_function, lambdas in grouped_meta.items():
-            lines.extend(meta_assignment_block(var_name, meta_function, lambdas))
+            lines.extend(
+                meta_assignment_block(
+                    var_name,
+                    meta_function,
+                    lambdas,
+                    self_dependency=meta_function in dependent_meta,
+                )
+            )
             if meta_function == "bitwise_left_shift":
                 lines.append(
                     f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_owner)}, '
@@ -1869,7 +2013,15 @@ class Sol2Generator:
                 f'    LUASF_STUB_FUNCTION({cpp_string_literal(lua_owner)}, {cpp_string_literal(method_name)}, '
                 f'{cpp_string_literal(function_type)});'
             )
-            lines.extend(overload_block(method_name, [lambda_code], "    ", f"{var_name}.set_function"))
+            lines.extend(
+                overload_block(
+                    method_name,
+                    [lambda_code],
+                    "    ",
+                    f"{var_name}.set_function",
+                    True,
+                )
+            )
 
         lines.extend(self._emit_output_reference_read_operator(var_name, full_name, lua_owner, read_methods, skipped_lines))
         lines.extend(self._emit_index_operator(var_name, full_name, index_methods, skipped_lines))
@@ -2015,12 +2167,15 @@ class Sol2Generator:
         )
         append_indented_block(
             lines,
-            f"""[{table_var}, {index_fn}](sol::this_state state, {full_name}& self, sol::object key) -> sol::object {{
+            f"""sol::policies(
+    [{table_var}, {index_fn}](sol::this_state state, {full_name}& self, sol::object key) -> sol::object {{
     if (key.get_type() != sol::type::number)
         return {table_var}.get<sol::object>(key);
     const {index_type} index = {index_fn}(key);
     return sol::make_object(state, std::ref({call_target}.operator[](index)));
-}}""",
+    }},
+    sol::self_dependency{{}}
+)""",
             "        ",
         )
         lines.append("    ;")

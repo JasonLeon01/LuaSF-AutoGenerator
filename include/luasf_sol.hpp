@@ -19,22 +19,51 @@ inline constexpr decltype(sol::lua_nil) LUASF_SOL_NIL = sol::lua_nil;
 namespace detail {
 
 enum class LuaSFNativeLookup {
-  notComposite,
+  notInterop,
   missing,
   found,
+  external,
 };
+
+inline constexpr const char *LUASF_EXTERNAL_CAST_KEY = "__LuaSFExternalCast";
+
+inline void register_external_metatable(lua_State *state,
+                                        const std::string &metatableName) {
+  lua_getfield(state, LUA_REGISTRYINDEX, metatableName.c_str());
+  if (!lua_istable(state, -1)) {
+    lua_pop(state, 1);
+    return;
+  }
+  lua_getfield(state, -1, &sol::detail::base_class_cast_key()[0]);
+  const int castType = lua_type(state, -1);
+  if (castType == LUA_TUSERDATA || castType == LUA_TLIGHTUSERDATA)
+    lua_setfield(state, -2, LUASF_EXTERNAL_CAST_KEY);
+  else
+    lua_pop(state, 1);
+  lua_pop(state, 1);
+}
 
 template <typename T>
 LuaSFNativeLookup push_luasf_native_object(lua_State *state, int index) {
   index = lua_absindex(state, index);
   if (lua_type(state, index) != LUA_TUSERDATA ||
       lua_getmetatable(state, index) == 0)
-    return LuaSFNativeLookup::notComposite;
+    return LuaSFNativeLookup::notInterop;
   lua_getfield(state, -1, "__LuaSFNativeComposite");
   const bool isComposite = lua_toboolean(state, -1) != 0;
-  lua_pop(state, 2);
-  if (!isComposite)
-    return LuaSFNativeLookup::notComposite;
+  lua_pop(state, 1);
+  if (!isComposite) {
+    lua_getfield(state, -1, LUASF_EXTERNAL_CAST_KEY);
+    const int castType = lua_type(state, -1);
+    const bool isExternalUsertype = castType == LUA_TUSERDATA ||
+                                    castType == LUA_TLIGHTUSERDATA;
+    lua_pop(state, 2);
+    if (!isExternalUsertype)
+      return LuaSFNativeLookup::notInterop;
+    lua_pushvalue(state, index);
+    return LuaSFNativeLookup::external;
+  }
+  lua_pop(state, 1);
   if (lua_getiuservalue(state, index, 1) != LUA_TTABLE) {
     lua_pop(state, 1);
     return LuaSFNativeLookup::missing;
@@ -63,7 +92,11 @@ T *get_pushed_luasf_native_object(lua_State *state) {
   void *nativeObject = *static_cast<void **>(rawData);
   if (nativeObject == nullptr || lua_getmetatable(state, -1) == 0)
     return nullptr;
-  lua_getfield(state, -1, &sol::detail::base_class_cast_key()[0]);
+  lua_getfield(state, -1, LUASF_EXTERNAL_CAST_KEY);
+  if (lua_type(state, -1) == LUA_TNIL) {
+    lua_pop(state, 1);
+    lua_getfield(state, -1, &sol::detail::base_class_cast_key()[0]);
+  }
   if (lua_type(state, -1) != LUA_TNIL) {
     void *castData = lua_touserdata(state, -1);
     if (castData == nullptr) {
@@ -80,6 +113,22 @@ T *get_pushed_luasf_native_object(lua_State *state) {
 
 } // namespace detail
 
+template <typename T, typename... Bases>
+void register_external_usertype(sol::state_view lua) {
+  (void)sizeof...(Bases);
+  lua_State *state = lua.lua_state();
+  detail::register_external_metatable(
+      state, sol::usertype_traits<T>::metatable());
+  detail::register_external_metatable(
+      state, sol::usertype_traits<const T>::metatable());
+  detail::register_external_metatable(
+      state, sol::usertype_traits<T *>::metatable());
+  detail::register_external_metatable(
+      state, sol::usertype_traits<const T *>::metatable());
+  detail::register_external_metatable(
+      state, sol::usertype_traits<sol::d::u<T>>::metatable());
+}
+
 } // namespace lua_sf
 
 namespace sol {
@@ -89,7 +138,8 @@ bool sol_lua_interop_check(types<T>, lua_State *state, int index, type,
                            Handler &&, stack::record &tracking) {
   const lua_sf::detail::LuaSFNativeLookup lookup =
       lua_sf::detail::push_luasf_native_object<T>(state, index);
-  if (lookup != lua_sf::detail::LuaSFNativeLookup::found)
+  if (lookup != lua_sf::detail::LuaSFNativeLookup::found &&
+      lookup != lua_sf::detail::LuaSFNativeLookup::external)
     return false;
   T *value = lua_sf::detail::get_pushed_luasf_native_object<T>(state);
   lua_pop(state, 1);
@@ -104,7 +154,7 @@ std::pair<bool, T *> sol_lua_interop_get(types<T>, lua_State *state, int index,
                                          void *, stack::record &tracking) {
   const lua_sf::detail::LuaSFNativeLookup lookup =
       lua_sf::detail::push_luasf_native_object<T>(state, index);
-  if (lookup == lua_sf::detail::LuaSFNativeLookup::notComposite)
+  if (lookup == lua_sf::detail::LuaSFNativeLookup::notInterop)
     return {false, nullptr};
   if (lookup == lua_sf::detail::LuaSFNativeLookup::missing) {
     luaL_typeerror(state, index,
@@ -114,6 +164,8 @@ std::pair<bool, T *> sol_lua_interop_get(types<T>, lua_State *state, int index,
   T *value = lua_sf::detail::get_pushed_luasf_native_object<T>(state);
   lua_pop(state, 1);
   if (value == nullptr) {
+    if (lookup == lua_sf::detail::LuaSFNativeLookup::external)
+      return {false, nullptr};
     luaL_typeerror(state, index,
                    sol::usertype_traits<T>::qualified_name().c_str());
     return {false, nullptr};

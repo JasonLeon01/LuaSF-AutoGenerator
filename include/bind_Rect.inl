@@ -24,8 +24,9 @@ void bind_RectT(sol::state_view lua, sol::table sfTable,
                                                 {unwrapLuaNumeric<T>(width),
                                                  unwrapLuaNumeric<T>(height)}};
                                           }));
-  type["position"] = &Rect::position;
-  type["size"] = &Rect::size;
+  type["position"] =
+      sol::policies(&Rect::position, sol::self_dependency{});
+  type["size"] = sol::policies(&Rect::size, sol::self_dependency{});
   type.set_function("contains", [](const Rect &self, Vector point) {
     return self.contains(point);
   });

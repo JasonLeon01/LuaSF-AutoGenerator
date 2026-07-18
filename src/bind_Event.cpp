@@ -71,6 +71,16 @@ void bind_empty_event_subtype(sol::table sf, const char *name) {
   sf.new_usertype<T>(name, sol::constructors<T()>());
 }
 
+template <typename T, typename UserType>
+void bind_event_get_if(UserType &type, sol::state_view lua,
+                       const char *name) {
+  type.set_function(
+      name,
+      sol::policies(
+          [lua](sf::Event &self) { return event_get_if<T>(lua, self); },
+          sol::self_dependency{}));
+}
+
 template <typename UserType, typename EventType, typename FieldType>
 void bind_event_field(UserType &type, const char *name,
                       FieldType EventType::*field) {
@@ -88,7 +98,7 @@ void bind_event_field(UserType &type, const char *name,
               self.*field = value.value();
             }));
   } else {
-    type[name] = field;
+    type[name] = sol::policies(field, sol::self_dependency{});
   }
 }
 
@@ -124,7 +134,7 @@ void bind_Event(sol::state_view lua) {
   LUASF_STUB_FUNCTION("sf.Event_Resized", "new", "fun(): sf.Event_Resized");
   auto resized = sf.new_usertype<sf::Event::Resized>(
       "Event_Resized", sol::constructors<sf::Event::Resized()>());
-  resized["size"] = &sf::Event::Resized::size;
+  bind_event_field(resized, "size", &sf::Event::Resized::size);
 
   LUASF_STUB_CLASS("sf.Event_TextEntered");
   LUASF_STUB_FIELD("unicode", "integer");
@@ -145,12 +155,13 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_KeyPressed");
   auto keyPressed = sf.new_usertype<sf::Event::KeyPressed>(
       "Event_KeyPressed", sol::constructors<sf::Event::KeyPressed()>());
-  keyPressed["code"] = &sf::Event::KeyPressed::code;
-  keyPressed["scancode"] = &sf::Event::KeyPressed::scancode;
-  keyPressed["alt"] = &sf::Event::KeyPressed::alt;
-  keyPressed["control"] = &sf::Event::KeyPressed::control;
-  keyPressed["shift"] = &sf::Event::KeyPressed::shift;
-  keyPressed["system"] = &sf::Event::KeyPressed::system;
+  bind_event_field(keyPressed, "code", &sf::Event::KeyPressed::code);
+  bind_event_field(keyPressed, "scancode",
+                   &sf::Event::KeyPressed::scancode);
+  bind_event_field(keyPressed, "alt", &sf::Event::KeyPressed::alt);
+  bind_event_field(keyPressed, "control", &sf::Event::KeyPressed::control);
+  bind_event_field(keyPressed, "shift", &sf::Event::KeyPressed::shift);
+  bind_event_field(keyPressed, "system", &sf::Event::KeyPressed::system);
 
   LUASF_STUB_CLASS("sf.Event_KeyReleased");
   LUASF_STUB_FIELD("code", "sf.Keyboard.Key");
@@ -163,12 +174,13 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_KeyReleased");
   auto keyReleased = sf.new_usertype<sf::Event::KeyReleased>(
       "Event_KeyReleased", sol::constructors<sf::Event::KeyReleased()>());
-  keyReleased["code"] = &sf::Event::KeyReleased::code;
-  keyReleased["scancode"] = &sf::Event::KeyReleased::scancode;
-  keyReleased["alt"] = &sf::Event::KeyReleased::alt;
-  keyReleased["control"] = &sf::Event::KeyReleased::control;
-  keyReleased["shift"] = &sf::Event::KeyReleased::shift;
-  keyReleased["system"] = &sf::Event::KeyReleased::system;
+  bind_event_field(keyReleased, "code", &sf::Event::KeyReleased::code);
+  bind_event_field(keyReleased, "scancode",
+                   &sf::Event::KeyReleased::scancode);
+  bind_event_field(keyReleased, "alt", &sf::Event::KeyReleased::alt);
+  bind_event_field(keyReleased, "control", &sf::Event::KeyReleased::control);
+  bind_event_field(keyReleased, "shift", &sf::Event::KeyReleased::shift);
+  bind_event_field(keyReleased, "system", &sf::Event::KeyReleased::system);
 
   LUASF_STUB_CLASS("sf.Event_MouseWheelScrolled");
   LUASF_STUB_FIELD("wheel", "sf.Mouse.Wheel");
@@ -179,9 +191,12 @@ void bind_Event(sol::state_view lua) {
   auto wheelScrolled = sf.new_usertype<sf::Event::MouseWheelScrolled>(
       "Event_MouseWheelScrolled",
       sol::constructors<sf::Event::MouseWheelScrolled()>());
-  wheelScrolled["wheel"] = &sf::Event::MouseWheelScrolled::wheel;
-  wheelScrolled["delta"] = &sf::Event::MouseWheelScrolled::delta;
-  wheelScrolled["position"] = &sf::Event::MouseWheelScrolled::position;
+  bind_event_field(wheelScrolled, "wheel",
+                   &sf::Event::MouseWheelScrolled::wheel);
+  bind_event_field(wheelScrolled, "delta",
+                   &sf::Event::MouseWheelScrolled::delta);
+  bind_event_field(wheelScrolled, "position",
+                   &sf::Event::MouseWheelScrolled::position);
 
   LUASF_STUB_CLASS("sf.Event_MouseButtonPressed");
   LUASF_STUB_FIELD("button", "sf.Mouse.Button");
@@ -191,8 +206,10 @@ void bind_Event(sol::state_view lua) {
   auto buttonPressed = sf.new_usertype<sf::Event::MouseButtonPressed>(
       "Event_MouseButtonPressed",
       sol::constructors<sf::Event::MouseButtonPressed()>());
-  buttonPressed["button"] = &sf::Event::MouseButtonPressed::button;
-  buttonPressed["position"] = &sf::Event::MouseButtonPressed::position;
+  bind_event_field(buttonPressed, "button",
+                   &sf::Event::MouseButtonPressed::button);
+  bind_event_field(buttonPressed, "position",
+                   &sf::Event::MouseButtonPressed::position);
 
   LUASF_STUB_CLASS("sf.Event_MouseButtonReleased");
   LUASF_STUB_FIELD("button", "sf.Mouse.Button");
@@ -202,8 +219,10 @@ void bind_Event(sol::state_view lua) {
   auto buttonReleased = sf.new_usertype<sf::Event::MouseButtonReleased>(
       "Event_MouseButtonReleased",
       sol::constructors<sf::Event::MouseButtonReleased()>());
-  buttonReleased["button"] = &sf::Event::MouseButtonReleased::button;
-  buttonReleased["position"] = &sf::Event::MouseButtonReleased::position;
+  bind_event_field(buttonReleased, "button",
+                   &sf::Event::MouseButtonReleased::button);
+  bind_event_field(buttonReleased, "position",
+                   &sf::Event::MouseButtonReleased::position);
 
   LUASF_STUB_CLASS("sf.Event_MouseMoved");
   LUASF_STUB_FIELD("position", "sf.Vector2i");
@@ -211,7 +230,7 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_MouseMoved");
   auto mouseMoved = sf.new_usertype<sf::Event::MouseMoved>(
       "Event_MouseMoved", sol::constructors<sf::Event::MouseMoved()>());
-  mouseMoved["position"] = &sf::Event::MouseMoved::position;
+  bind_event_field(mouseMoved, "position", &sf::Event::MouseMoved::position);
 
   LUASF_STUB_CLASS("sf.Event_MouseMovedRaw");
   LUASF_STUB_FIELD("delta", "sf.Vector2i");
@@ -219,7 +238,7 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_MouseMovedRaw");
   auto rawMoved = sf.new_usertype<sf::Event::MouseMovedRaw>(
       "Event_MouseMovedRaw", sol::constructors<sf::Event::MouseMovedRaw()>());
-  rawMoved["delta"] = &sf::Event::MouseMovedRaw::delta;
+  bind_event_field(rawMoved, "delta", &sf::Event::MouseMovedRaw::delta);
 
   LUASF_STUB_CLASS("sf.Event_JoystickButtonPressed");
   LUASF_STUB_FIELD("joystickId", "integer");
@@ -259,8 +278,9 @@ void bind_Event(sol::state_view lua) {
       "Event_JoystickMoved", sol::constructors<sf::Event::JoystickMoved()>());
   bind_event_field(joystickMoved, "joystickId",
                    &sf::Event::JoystickMoved::joystickId);
-  joystickMoved["axis"] = &sf::Event::JoystickMoved::axis;
-  joystickMoved["position"] = &sf::Event::JoystickMoved::position;
+  bind_event_field(joystickMoved, "axis", &sf::Event::JoystickMoved::axis);
+  bind_event_field(joystickMoved, "position",
+                   &sf::Event::JoystickMoved::position);
 
   LUASF_STUB_CLASS("sf.Event_JoystickConnected");
   LUASF_STUB_FIELD("joystickId", "integer");
@@ -290,7 +310,7 @@ void bind_Event(sol::state_view lua) {
   auto touchBegan = sf.new_usertype<sf::Event::TouchBegan>(
       "Event_TouchBegan", sol::constructors<sf::Event::TouchBegan()>());
   bind_event_field(touchBegan, "finger", &sf::Event::TouchBegan::finger);
-  touchBegan["position"] = &sf::Event::TouchBegan::position;
+  bind_event_field(touchBegan, "position", &sf::Event::TouchBegan::position);
 
   LUASF_STUB_CLASS("sf.Event_TouchMoved");
   LUASF_STUB_FIELD("finger", "integer");
@@ -300,7 +320,7 @@ void bind_Event(sol::state_view lua) {
   auto touchMoved = sf.new_usertype<sf::Event::TouchMoved>(
       "Event_TouchMoved", sol::constructors<sf::Event::TouchMoved()>());
   bind_event_field(touchMoved, "finger", &sf::Event::TouchMoved::finger);
-  touchMoved["position"] = &sf::Event::TouchMoved::position;
+  bind_event_field(touchMoved, "position", &sf::Event::TouchMoved::position);
 
   LUASF_STUB_CLASS("sf.Event_TouchEnded");
   LUASF_STUB_FIELD("finger", "integer");
@@ -310,7 +330,7 @@ void bind_Event(sol::state_view lua) {
   auto touchEnded = sf.new_usertype<sf::Event::TouchEnded>(
       "Event_TouchEnded", sol::constructors<sf::Event::TouchEnded()>());
   bind_event_field(touchEnded, "finger", &sf::Event::TouchEnded::finger);
-  touchEnded["position"] = &sf::Event::TouchEnded::position;
+  bind_event_field(touchEnded, "position", &sf::Event::TouchEnded::position);
 
   LUASF_STUB_CLASS("sf.Event_SensorChanged");
   LUASF_STUB_FIELD("type", "sf.Sensor.Type");
@@ -319,8 +339,8 @@ void bind_Event(sol::state_view lua) {
                       "fun(): sf.Event_SensorChanged");
   auto sensorChanged = sf.new_usertype<sf::Event::SensorChanged>(
       "Event_SensorChanged", sol::constructors<sf::Event::SensorChanged()>());
-  sensorChanged["type"] = &sf::Event::SensorChanged::type;
-  sensorChanged["value"] = &sf::Event::SensorChanged::value;
+  bind_event_field(sensorChanged, "type", &sf::Event::SensorChanged::type);
+  bind_event_field(sensorChanged, "value", &sf::Event::SensorChanged::value);
 
   LUASF_STUB_CLASS("sf.Event");
   LUASF_STUB_FUNCTION("sf.Event", "new",
@@ -424,11 +444,14 @@ void bind_Event(sol::state_view lua) {
     });
   });
   LUASF_STUB_FUNCTION("sf.Event", "get", "fun(self: sf.Event): any");
-  event.set_function("get", [lua](sf::Event &self) -> sol::object {
-    return self.visit([lua](auto &value) -> sol::object {
-      return sol::make_object(lua, std::ref(value));
-    });
-  });
+  event.set_function(
+      "get", sol::policies(
+                 [lua](sf::Event &self) -> sol::object {
+                   return self.visit([lua](auto &value) -> sol::object {
+                     return sol::make_object(lua, std::ref(value));
+                   });
+                 },
+                 sol::self_dependency{}));
 
   LUASF_STUB_FUNCTION("sf.Event", "isClosed", "fun(self: sf.Event): boolean");
   event.set_function("isClosed", &event_is<sf::Event::Closed>);
@@ -507,119 +530,87 @@ void bind_Event(sol::state_view lua) {
 
   LUASF_STUB_FUNCTION("sf.Event", "getIfClosed",
                       "fun(self: sf.Event): sf.Event_Closed|nil");
-  event.set_function("getIfClosed", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::Closed>(lua, self);
-  });
+  bind_event_get_if<sf::Event::Closed>(event, lua, "getIfClosed");
   LUASF_STUB_FUNCTION("sf.Event", "getIfResized",
                       "fun(self: sf.Event): sf.Event_Resized|nil");
-  event.set_function("getIfResized", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::Resized>(lua, self);
-  });
+  bind_event_get_if<sf::Event::Resized>(event, lua, "getIfResized");
   LUASF_STUB_FUNCTION("sf.Event", "getIfFocusLost",
                       "fun(self: sf.Event): sf.Event_FocusLost|nil");
-  event.set_function("getIfFocusLost", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::FocusLost>(lua, self);
-  });
+  bind_event_get_if<sf::Event::FocusLost>(event, lua, "getIfFocusLost");
   LUASF_STUB_FUNCTION("sf.Event", "getIfFocusGained",
                       "fun(self: sf.Event): sf.Event_FocusGained|nil");
-  event.set_function("getIfFocusGained", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::FocusGained>(lua, self);
-  });
+  bind_event_get_if<sf::Event::FocusGained>(event, lua,
+                                             "getIfFocusGained");
   LUASF_STUB_FUNCTION("sf.Event", "getIfTextEntered",
                       "fun(self: sf.Event): sf.Event_TextEntered|nil");
-  event.set_function("getIfTextEntered", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::TextEntered>(lua, self);
-  });
+  bind_event_get_if<sf::Event::TextEntered>(event, lua,
+                                             "getIfTextEntered");
   LUASF_STUB_FUNCTION("sf.Event", "getIfKeyPressed",
                       "fun(self: sf.Event): sf.Event_KeyPressed|nil");
-  event.set_function("getIfKeyPressed", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::KeyPressed>(lua, self);
-  });
+  bind_event_get_if<sf::Event::KeyPressed>(event, lua, "getIfKeyPressed");
   LUASF_STUB_FUNCTION("sf.Event", "getIfKeyReleased",
                       "fun(self: sf.Event): sf.Event_KeyReleased|nil");
-  event.set_function("getIfKeyReleased", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::KeyReleased>(lua, self);
-  });
+  bind_event_get_if<sf::Event::KeyReleased>(event, lua,
+                                             "getIfKeyReleased");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseWheelScrolled",
                       "fun(self: sf.Event): sf.Event_MouseWheelScrolled|nil");
-  event.set_function("getIfMouseWheelScrolled", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseWheelScrolled>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseWheelScrolled>(
+      event, lua, "getIfMouseWheelScrolled");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseButtonPressed",
                       "fun(self: sf.Event): sf.Event_MouseButtonPressed|nil");
-  event.set_function("getIfMouseButtonPressed", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseButtonPressed>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseButtonPressed>(
+      event, lua, "getIfMouseButtonPressed");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseButtonReleased",
                       "fun(self: sf.Event): sf.Event_MouseButtonReleased|nil");
-  event.set_function("getIfMouseButtonReleased", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseButtonReleased>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseButtonReleased>(
+      event, lua, "getIfMouseButtonReleased");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseMoved",
                       "fun(self: sf.Event): sf.Event_MouseMoved|nil");
-  event.set_function("getIfMouseMoved", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseMoved>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseMoved>(event, lua, "getIfMouseMoved");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseMovedRaw",
                       "fun(self: sf.Event): sf.Event_MouseMovedRaw|nil");
-  event.set_function("getIfMouseMovedRaw", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseMovedRaw>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseMovedRaw>(event, lua,
+                                               "getIfMouseMovedRaw");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseEntered",
                       "fun(self: sf.Event): sf.Event_MouseEntered|nil");
-  event.set_function("getIfMouseEntered", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseEntered>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseEntered>(event, lua,
+                                              "getIfMouseEntered");
   LUASF_STUB_FUNCTION("sf.Event", "getIfMouseLeft",
                       "fun(self: sf.Event): sf.Event_MouseLeft|nil");
-  event.set_function("getIfMouseLeft", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::MouseLeft>(lua, self);
-  });
+  bind_event_get_if<sf::Event::MouseLeft>(event, lua, "getIfMouseLeft");
   LUASF_STUB_FUNCTION(
       "sf.Event", "getIfJoystickButtonPressed",
       "fun(self: sf.Event): sf.Event_JoystickButtonPressed|nil");
-  event.set_function("getIfJoystickButtonPressed", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::JoystickButtonPressed>(lua, self);
-  });
+  bind_event_get_if<sf::Event::JoystickButtonPressed>(
+      event, lua, "getIfJoystickButtonPressed");
   LUASF_STUB_FUNCTION(
       "sf.Event", "getIfJoystickButtonReleased",
       "fun(self: sf.Event): sf.Event_JoystickButtonReleased|nil");
-  event.set_function("getIfJoystickButtonReleased", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::JoystickButtonReleased>(lua, self);
-  });
+  bind_event_get_if<sf::Event::JoystickButtonReleased>(
+      event, lua, "getIfJoystickButtonReleased");
   LUASF_STUB_FUNCTION("sf.Event", "getIfJoystickMoved",
                       "fun(self: sf.Event): sf.Event_JoystickMoved|nil");
-  event.set_function("getIfJoystickMoved", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::JoystickMoved>(lua, self);
-  });
+  bind_event_get_if<sf::Event::JoystickMoved>(event, lua,
+                                               "getIfJoystickMoved");
   LUASF_STUB_FUNCTION("sf.Event", "getIfJoystickConnected",
                       "fun(self: sf.Event): sf.Event_JoystickConnected|nil");
-  event.set_function("getIfJoystickConnected", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::JoystickConnected>(lua, self);
-  });
+  bind_event_get_if<sf::Event::JoystickConnected>(
+      event, lua, "getIfJoystickConnected");
   LUASF_STUB_FUNCTION("sf.Event", "getIfJoystickDisconnected",
                       "fun(self: sf.Event): sf.Event_JoystickDisconnected|nil");
-  event.set_function("getIfJoystickDisconnected", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::JoystickDisconnected>(lua, self);
-  });
+  bind_event_get_if<sf::Event::JoystickDisconnected>(
+      event, lua, "getIfJoystickDisconnected");
   LUASF_STUB_FUNCTION("sf.Event", "getIfTouchBegan",
                       "fun(self: sf.Event): sf.Event_TouchBegan|nil");
-  event.set_function("getIfTouchBegan", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::TouchBegan>(lua, self);
-  });
+  bind_event_get_if<sf::Event::TouchBegan>(event, lua, "getIfTouchBegan");
   LUASF_STUB_FUNCTION("sf.Event", "getIfTouchMoved",
                       "fun(self: sf.Event): sf.Event_TouchMoved|nil");
-  event.set_function("getIfTouchMoved", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::TouchMoved>(lua, self);
-  });
+  bind_event_get_if<sf::Event::TouchMoved>(event, lua, "getIfTouchMoved");
   LUASF_STUB_FUNCTION("sf.Event", "getIfTouchEnded",
                       "fun(self: sf.Event): sf.Event_TouchEnded|nil");
-  event.set_function("getIfTouchEnded", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::TouchEnded>(lua, self);
-  });
+  bind_event_get_if<sf::Event::TouchEnded>(event, lua, "getIfTouchEnded");
   LUASF_STUB_FUNCTION("sf.Event", "getIfSensorChanged",
                       "fun(self: sf.Event): sf.Event_SensorChanged|nil");
-  event.set_function("getIfSensorChanged", [lua](sf::Event &self) {
-    return event_get_if<sf::Event::SensorChanged>(lua, self);
-  });
+  bind_event_get_if<sf::Event::SensorChanged>(event, lua,
+                                               "getIfSensorChanged");
 }
