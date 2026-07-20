@@ -91,6 +91,7 @@ endif()
 
 set(LUASF_BINDING_SOURCES
 {binding_sources}
+    "src/LuaStateLifecycle.cpp"
     "{entry_source}"
 )
 
@@ -199,7 +200,7 @@ function(luasf_configure_binding_target target_name output_dir archive_dir)
     endif()
 
     if(MSVC)
-        target_compile_options("${{target_name}}" PRIVATE /permissive- /EHsc /bigobj)
+        target_compile_options("${{target_name}}" PRIVATE /permissive- /EHsc /bigobj /utf-8)
     else()
         target_compile_options("${{target_name}}" PRIVATE -Wall -Wextra)
     endif()

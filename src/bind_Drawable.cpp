@@ -3,14 +3,12 @@
 #include <memory>
 #include <utility>
 
-lua_sf::LuaDrawable::LuaDrawable(sol::protected_function drawCallback)
+lua_sf::LuaDrawable::LuaDrawable(DrawCallback drawCallback)
     : m_drawCallback(std::move(drawCallback)) {}
 
 void lua_sf::LuaDrawable::draw(sf::RenderTarget &target,
                                sf::RenderStates states) const {
-  sol::protected_function_result result =
-      m_drawCallback(std::ref(target), states);
-  throw_on_lua_error(result);
+  m_drawCallback(target, states);
 }
 
 void bind_Drawable(sol::state_view lua) {
@@ -23,17 +21,25 @@ void bind_Drawable(sol::state_view lua) {
   drawableType.raw_set("__classCallbacks", callbacks);
   drawableType.set_function(
       "__classFactory", [](const sol::table &classCallbacks) {
-        return std::make_unique<lua_sf::LuaDrawable>(
-            classCallbacks["draw"].get<sol::protected_function>());
+        return lua_sf::makeLuaSharedObject<lua_sf::LuaDrawable>(
+            lua_sf::function_from_object<void(sf::RenderTarget &,
+                                              sf::RenderStates)>(
+                classCallbacks["draw"].get<sol::object>()));
       });
   LUASF_STUB_CLASS("sf.LuaDrawable", "sf.Drawable");
   LUASF_STUB_FUNCTION("sf.LuaDrawable", "new",
                       "fun(drawCallback: fun(target: sf.RenderTarget, states: "
                       "sf.RenderStates)): sf.LuaDrawable");
-  sf.new_usertype<lua_sf::LuaDrawable>(
-      "LuaDrawable",
-      sol::constructors<lua_sf::LuaDrawable(sol::protected_function)>(),
-      sol::base_classes, sol::bases<sf::Drawable>());
+  auto luaDrawableType = sf.new_usertype<lua_sf::LuaDrawable>(
+      "LuaDrawable", sol::no_constructor, sol::base_classes,
+      sol::bases<sf::Drawable>());
+  luaDrawableType.set_function(
+      "new", sol::factories([](const sol::object &drawCallback) {
+        return lua_sf::makeLuaSharedObject<lua_sf::LuaDrawable>(
+            lua_sf::function_from_object<void(sf::RenderTarget &,
+                                              sf::RenderStates)>(drawCallback));
+      }));
+  lua_sf::mark_shared_usertype<lua_sf::LuaDrawable>(lua);
   sol::table luaDrawableBases = lua.create_table();
   luaDrawableBases.add(drawableType);
   sf["LuaDrawable"].get<sol::table>().raw_set("__nativeBases",

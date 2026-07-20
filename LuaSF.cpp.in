@@ -20,6 +20,10 @@ extern "C" LUASF_API int {module_name}_register(lua_State* state)
     {{
         return 1;
     }}
+    if (LuaSF_initialize_state(state) != 0)
+    {{
+        return 1;
+    }}
 
     sol::state_view lua(state);
     sol::table sf = lua["sf"].get_or_create<sol::table>();
@@ -60,6 +64,7 @@ extern "C" LUASF_API lua_State* {state_factory_name}()
 
     if ({module_name}_register(state) != 0)
     {{
+        LuaSF_shutdown_state(state);
         lua_close(state);
         return nullptr;
     }}
@@ -81,6 +86,7 @@ extern "C" LUASF_API int {module_name}_write_stub(const char* path)
         return 1;
     }}
 
+    LuaSF_shutdown_state(state);
     lua_close(state);
     lua_sf::stub::end();
     return 0;

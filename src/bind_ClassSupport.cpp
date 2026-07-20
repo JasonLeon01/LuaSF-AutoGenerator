@@ -9,8 +9,9 @@ void bind_ClassSupport(sol::state_view lua) {
   sf.new_usertype<lua_sf::ClassSprite>(
       "__ClassSprite", sol::no_constructor, sol::base_classes,
       sol::bases<sf::Sprite, sf::Drawable, sf::Transformable>());
+  lua_sf::mark_shared_usertype<lua_sf::ClassSprite>(lua);
   sf["Sprite"].get<sol::table>().set_function(
       "__classFactory", [](const sol::table &) {
-        return std::make_unique<lua_sf::ClassSprite>();
+        return lua_sf::makeLuaSharedObject<lua_sf::ClassSprite>();
       });
 }

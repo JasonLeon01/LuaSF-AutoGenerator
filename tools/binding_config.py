@@ -695,7 +695,7 @@ _t("ll_memory_ctor_direct",
     "    {data_name}_buffer->data(),",
     "    static_cast<{size_type}>({data_name}_buffer->size()));",
     "lua_sf::rememberLongLivedMemory(*object, std::move({data_name}_buffer));",
-    "return object;",
+    "return lua_sf::wrapLuaSharedObject(std::move(object));",
 )
 
 _t("ll_memory_ctor_via_open",
@@ -704,7 +704,7 @@ _t("ll_memory_ctor_via_open",
     "if (!object->openFromMemory({data_name}_buffer->data(), static_cast<{size_type}>({data_name}_buffer->size())))",
     '    throw std::runtime_error("Failed to open {lua_path} from memory");',
     "lua_sf::rememberLongLivedMemory(*object, std::move({data_name}_buffer));",
-    "return object;",
+    "return lua_sf::wrapLuaSharedObject(std::move(object));",
 )
 
 _t("ll_memory_open",
@@ -722,7 +722,7 @@ _t("ll_stream_ctor",
     "auto& {stream_name}_ref = {stream_name}.as<sf::InputStream&>();",
     "auto object = lua_sf::makeLongLivedMemoryObject<{owner_type}>({stream_name}_ref);",
     "lua_sf::rememberLongLivedStream(*object, std::move({stream_name}));",
-    "return object;",
+    "return lua_sf::wrapLuaSharedObject(std::move(object));",
 )
 
 _t("ll_stream_open",

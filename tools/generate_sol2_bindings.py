@@ -985,8 +985,15 @@ def make_lambda(
             return render_ll_stream_ctor(owner_clean, params), None
         lines.append(f"{capture}({lua_args}) {{")
         lines.extend(f"    {line}" for line in plan.prelude)
-        factory = "lua_sf::makeLongLivedMemoryObject" if is_memory_lifecycle else "std::make_unique"
-        lines.append(f"    return {factory}<{owner_type}>({', '.join(plan.call_args)});")
+        if is_memory_lifecycle:
+            lines.append(
+                f"    return lua_sf::wrapLuaSharedObject("
+                f"lua_sf::makeLongLivedMemoryObject<{owner_type}>({', '.join(plan.call_args)}));"
+            )
+        else:
+            lines.append(
+                f"    return lua_sf::makeLuaSharedObject<{owner_type}>({', '.join(plan.call_args)});"
+            )
         lines.append("}")
         return "\n".join(lines), None
 
@@ -1001,6 +1008,38 @@ def make_lambda(
     if owner_type is None:
         call_target = call_name
     call_expr = f"{call_target}({', '.join(plan.call_args)})"
+
+    callback_signature = (
+        std_function_signature(TypeRef.from_json(params[0].get("type")))
+        if owner_type is None
+        and len(params) == 1
+        and call_name.rsplit("::", 1)[-1].startswith("set")
+        and return_type.cpp == "void"
+        else None
+    )
+    if callback_signature:
+        callback_name = sanitize_identifier(params[0].get("name") or "callback")
+        return (
+            "\n".join(
+                [
+                    f"[]({lua_param_type(TypeRef.from_json(params[0].get('type')))} {callback_name}) {{",
+                    "    static const unsigned char callbackOwner{};",
+                    f"    lua_State *state = {callback_name}.lua_state();",
+                    f"    if (lua_sf::is_nil_object({callback_name})) {{",
+                    f"        {call_target}({{}});",
+                    "        lua_sf::detail::unregisterStateQuiesceCallback(state, &callbackOwner);",
+                    "        return;",
+                    "    }",
+                    f"    auto nativeCallback = lua_sf::function_from_object_at_native_thread_boundary<{callback_signature}>({callback_name});",
+                    "    lua_sf::detail::registerStateQuiesceCallback(",
+                    "        state, &callbackOwner,",
+                    f"        []() noexcept {{ {call_target}({{}}); }});",
+                    f"    {call_target}(std::move(nativeCallback));",
+                    "}",
+                ]
+            ),
+            None,
+        )
 
     if (
         owner_type
@@ -1443,6 +1482,7 @@ class Sol2Generator:
 
         nested_table_var = f"table_{sanitize_identifier(full_name)}"
         lines.append(f'    sol::table {nested_table_var} = {table_var}["{lua_name}"].get<sol::table>();')
+        lines.append(f"    lua_sf::mark_shared_usertype<{full_name}>(lua);")
         if direct_bases:
             native_bases_var = f"native_bases_{sanitize_identifier(full_name)}"
             lines.append(f"    sol::table {native_bases_var} = lua.create_table();")
@@ -1632,11 +1672,11 @@ class Sol2Generator:
             # Synthesize a default constructor for aggregate types
             # (types with public fields but no user-declared constructors).
             if self._has_default_constructible_aggregate(cls):
-                default_lambda = f"[]() {{\n    return std::make_unique<{full_name}>();\n}}"
+                default_lambda = f"[]() {{\n    return lua_sf::makeLuaSharedObject<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
                 overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub, None))
             elif self._has_implicit_default_constructor(cls):
-                default_lambda = f"[]() {{\n    return std::make_unique<{full_name}>();\n}}"
+                default_lambda = f"[]() {{\n    return lua_sf::makeLuaSharedObject<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
                 overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub, None))
             else:

@@ -110,6 +110,31 @@ inline void throw_on_lua_error(const sol::protected_function_result &result) {
   throw std::runtime_error(error.what());
 }
 
+inline LuaRegistryReference
+makeLuaRegistryReference(const sol::object &object) {
+  lua_State *state = object.lua_state();
+  LuaStateExecutionScope execution(state);
+  if (!execution.active())
+    throw std::runtime_error("Lua state is stopping");
+  auto pushed = sol::stack::push_pop(object);
+  return LuaRegistryReference(state, pushed.index_of(object));
+}
+
+template <typename Callback>
+decltype(auto) withLuaRegistryCallback(
+    const LuaRegistryReference &reference, Callback &&callback) {
+  lua_State *state = reference.state();
+  LuaStateExecutionScope execution(state);
+  if (!execution.active())
+    throw std::runtime_error("Lua state is stopping");
+  if (!reference.push())
+    throw std::runtime_error("Lua callback is no longer available");
+  auto popper = sol::stack::pop_n(state, 1);
+  sol::protected_function function =
+      sol::stack::get<sol::protected_function>(state, -1);
+  return std::forward<Callback>(callback)(function, sol::state_view(state));
+}
+
 inline std::unordered_map<const void *, LongLivedMemoryBuffer> &
 longLivedMemoryStore() {
   static std::unordered_map<const void *, LongLivedMemoryBuffer> store;
@@ -117,17 +142,6 @@ longLivedMemoryStore() {
 }
 
 inline std::mutex &longLivedMemoryStoreMutex() {
-  static std::mutex mutex;
-  return mutex;
-}
-
-inline std::unordered_map<const void *, LongLivedStreamObject> &
-longLivedStreamStore() {
-  static std::unordered_map<const void *, LongLivedStreamObject> store;
-  return store;
-}
-
-inline std::mutex &longLivedStreamStoreMutex() {
   static std::mutex mutex;
   return mutex;
 }
@@ -159,23 +173,21 @@ inline void releaseLongLivedMemory(const void *owner) {
 }
 
 inline void rememberLongLivedStream(const void *owner,
-                                    LongLivedStreamObject stream) {
+                                    const sol::object &stream) {
   if (!owner)
     return;
-
-  std::lock_guard<std::mutex> lock(longLivedStreamStoreMutex());
-  if (stream.valid())
-    longLivedStreamStore().insert_or_assign(owner, std::move(stream));
-  else
-    longLivedStreamStore().erase(owner);
+  if (!stream.valid()) {
+    detail::releaseLuaRegistryReference(owner);
+    return;
+  }
+  detail::retainLuaRegistryReference(owner, makeLuaRegistryReference(stream));
 }
 
 inline void releaseLongLivedStream(const void *owner) {
   if (!owner)
     return;
 
-  std::lock_guard<std::mutex> lock(longLivedStreamStoreMutex());
-  longLivedStreamStore().erase(owner);
+  detail::releaseLuaRegistryReference(owner);
 }
 
 inline void releaseLongLivedResources(const void *owner) {
@@ -193,8 +205,8 @@ template <typename T> void releaseLongLivedMemory(const T &owner) {
 }
 
 template <typename T>
-void rememberLongLivedStream(const T &owner, LongLivedStreamObject stream) {
-  rememberLongLivedStream(static_cast<const void *>(&owner), std::move(stream));
+void rememberLongLivedStream(const T &owner, const sol::object &stream) {
+  rememberLongLivedStream(static_cast<const void *>(&owner), stream);
 }
 
 template <typename T> void releaseLongLivedStream(const T &owner) {
@@ -205,17 +217,12 @@ template <typename T> void releaseLongLivedResources(const T &owner) {
   releaseLongLivedResources(static_cast<const void *>(&owner));
 }
 
-template <typename T>
-void LongLivedMemoryDeleter<T>::operator()(T *object) const noexcept {
-  releaseLongLivedResources(static_cast<const void *>(object));
-  delete object;
-}
-
 template <typename T, typename... Args>
-std::unique_ptr<T, LongLivedMemoryDeleter<T>>
-makeLongLivedMemoryObject(Args &&...args) {
-  return std::unique_ptr<T, LongLivedMemoryDeleter<T>>(
-      new T(std::forward<Args>(args)...));
+std::shared_ptr<T> makeLongLivedMemoryObject(Args &&...args) {
+  return std::shared_ptr<T>(new T(std::forward<Args>(args)...), [](T *object) {
+    releaseLongLivedResources(static_cast<const void *>(object));
+    delete object;
+  });
 }
 
 template <typename T> T object_as(const sol::object &object) {
@@ -419,16 +426,68 @@ template <typename R, typename... Args> struct function_converter<R(Args...)> {
     if (is_nil_object(object))
       return {};
 
-    sol::protected_function callback = object.as<sol::protected_function>();
-    return [callback = std::move(callback)](Args... args) mutable -> R {
-      sol::protected_function_result result =
-          callback(std::forward<Args>(args)...);
-      throw_on_lua_error(result);
-      if constexpr (!std::is_void_v<R>)
-        return result.get<R>();
+    const LuaRegistryReference callback = makeLuaRegistryReference(object);
+    return [callback](Args... args) -> R {
+      return withLuaRegistryCallback(
+          callback,
+          [&](sol::protected_function &function, sol::state_view) -> R {
+            sol::protected_function_result result =
+                function(std::forward<Args>(args)...);
+            throw_on_lua_error(result);
+            if constexpr (!std::is_void_v<R>)
+              return result.get<R>();
+          });
     };
   }
 };
+
+template <typename Signature> struct native_thread_function_converter;
+
+template <typename... Args>
+struct native_thread_function_converter<void(Args...)> {
+  static std::function<void(Args...)> from_object(const sol::object &object) {
+    if (is_nil_object(object))
+      return {};
+
+    const LuaRegistryReference callback = makeLuaRegistryReference(object);
+    return [callback](Args... args) noexcept {
+      try {
+        withLuaRegistryCallback(
+            callback, [&](sol::protected_function &function, sol::state_view) {
+              sol::protected_function_result result =
+                  function(std::forward<Args>(args)...);
+              throw_on_lua_error(result);
+            });
+      } catch (...) {
+        return;
+      }
+    };
+  }
+};
+
+template <typename Signature>
+std::function<Signature>
+function_from_object_at_native_thread_boundary(const sol::object &object) {
+  return native_thread_function_converter<Signature>::from_object(object);
+}
+
+inline void passthroughAudioFrames(const float *inputFrames,
+                                   unsigned int &inputFrameCount,
+                                   float *outputFrames,
+                                   unsigned int &outputFrameCount,
+                                   unsigned int frameChannelCount) noexcept {
+  if (inputFrames == nullptr || outputFrames == nullptr) {
+    inputFrameCount = 0;
+    outputFrameCount = 0;
+    return;
+  }
+  const unsigned int frameCount = std::min(inputFrameCount, outputFrameCount);
+  std::memcpy(outputFrames, inputFrames,
+              static_cast<std::size_t>(frameCount) * frameChannelCount *
+                  sizeof(float));
+  inputFrameCount = frameCount;
+  outputFrameCount = frameCount;
+}
 
 template <>
 struct function_converter<void(const float *, unsigned int &, float *,
@@ -439,51 +498,62 @@ struct function_converter<void(const float *, unsigned int &, float *,
     if (is_nil_object(object))
       return {};
 
-    sol::protected_function callback = object.as<sol::protected_function>();
-    return [callback = std::move(callback)](
-               const float *inputFrames, unsigned int &inputFrameCount,
-               float *outputFrames, unsigned int &outputFrameCount,
-               unsigned int frameChannelCount) mutable {
-      sol::state_view lua(callback.lua_state());
-      const unsigned int inputFrameCapacity = inputFrameCount;
-      const unsigned int outputFrameCapacity = outputFrameCount;
-      sol::table input = audioFramesToTable(lua, inputFrames, inputFrameCount,
-                                            frameChannelCount);
-      sol::table output = audioFramesToTable(
-          lua, outputFrames, outputFrameCount, frameChannelCount);
+    const LuaRegistryReference callback = makeLuaRegistryReference(object);
+    return [callback](const float *inputFrames, unsigned int &inputFrameCount,
+                      float *outputFrames, unsigned int &outputFrameCount,
+                      unsigned int frameChannelCount) noexcept {
+      const unsigned int initialInputFrameCount = inputFrameCount;
+      const unsigned int initialOutputFrameCount = outputFrameCount;
+      try {
+        withLuaRegistryCallback(callback, [&](sol::protected_function &function,
+                                              sol::state_view lua) {
+          const unsigned int inputFrameCapacity = inputFrameCount;
+          const unsigned int outputFrameCapacity = outputFrameCount;
+          sol::table input = audioFramesToTable(
+              lua, inputFrames, inputFrameCount, frameChannelCount);
+          sol::table output = audioFramesToTable(
+              lua, outputFrames, outputFrameCount, frameChannelCount);
 
-      sol::protected_function_result result = callback(
-          input, inputFrameCount, output, outputFrameCount, frameChannelCount);
-      throw_on_lua_error(result);
+          sol::protected_function_result result =
+              function(input, inputFrameCount, output, outputFrameCount,
+                       frameChannelCount);
+          throw_on_lua_error(result);
 
-      sol::object outputValue = output;
-      const sol::object returned = result;
-      if (!is_nil_object(returned)) {
-        if (returned.get_type() == sol::type::table) {
-          const sol::table table = returned.as<sol::table>();
-          const sol::object inputCountValue = table["inputFrameCount"];
-          const sol::object outputCountValue = table["outputFrameCount"];
-          const sol::object returnedOutputValue = table["output"];
-          updateAudioFrameCount(inputCountValue, inputFrameCount,
-                                inputFrameCapacity);
-          updateAudioFrameCount(outputCountValue, outputFrameCount,
-                                outputFrameCapacity);
+          sol::object outputValue = output;
+          const sol::object returned = result;
+          if (!is_nil_object(returned)) {
+            if (returned.get_type() == sol::type::table) {
+              const sol::table table = returned.as<sol::table>();
+              const sol::object inputCountValue = table["inputFrameCount"];
+              const sol::object outputCountValue = table["outputFrameCount"];
+              const sol::object returnedOutputValue = table["output"];
+              updateAudioFrameCount(inputCountValue, inputFrameCount,
+                                    inputFrameCapacity);
+              updateAudioFrameCount(outputCountValue, outputFrameCount,
+                                    outputFrameCapacity);
 
-          const bool hasNamedReturn = !is_nil_object(inputCountValue) ||
-                                      !is_nil_object(outputCountValue) ||
-                                      !is_nil_object(returnedOutputValue);
-          if (!is_nil_object(returnedOutputValue))
-            outputValue = returnedOutputValue;
-          else if (!hasNamedReturn)
-            outputValue = returned;
-        } else if (returned.get_type() == sol::type::number) {
-          updateAudioFrameCount(returned, outputFrameCount,
-                                outputFrameCapacity);
-        }
+              const bool hasNamedReturn = !is_nil_object(inputCountValue) ||
+                                          !is_nil_object(outputCountValue) ||
+                                          !is_nil_object(returnedOutputValue);
+              if (!is_nil_object(returnedOutputValue))
+                outputValue = returnedOutputValue;
+              else if (!hasNamedReturn)
+                outputValue = returned;
+            } else if (returned.get_type() == sol::type::number) {
+              updateAudioFrameCount(returned, outputFrameCount,
+                                    outputFrameCapacity);
+            }
+          }
+
+          copyAudioFramesFromObject(outputValue, outputFrames, outputFrameCount,
+                                    frameChannelCount);
+        });
+      } catch (...) {
+        inputFrameCount = initialInputFrameCount;
+        outputFrameCount = initialOutputFrameCount;
+        passthroughAudioFrames(inputFrames, inputFrameCount, outputFrames,
+                               outputFrameCount, frameChannelCount);
       }
-
-      copyAudioFramesFromObject(outputValue, outputFrames, outputFrameCount,
-                                frameChannelCount);
     };
   }
 };
@@ -497,33 +567,38 @@ struct function_converter<void(const sf::Text::ShapedGlyph &, std::uint32_t &,
     if (is_nil_object(object))
       return {};
 
-    sol::protected_function callback = object.as<sol::protected_function>();
-    return [callback = std::move(callback)](
+    const LuaRegistryReference callback = makeLuaRegistryReference(object);
+    return [callback](
                const sf::Text::ShapedGlyph &shapedGlyph, std::uint32_t &style,
                sf::Color &fillColor, sf::Color &outlineColor,
-               float &outlineThickness) mutable {
-      sol::protected_function_result result =
-          callback(std::ref(shapedGlyph), style, std::ref(fillColor),
-                   std::ref(outlineColor), outlineThickness);
-      throw_on_lua_error(result);
+               float &outlineThickness) {
+      withLuaRegistryCallback(
+          callback,
+          [&](sol::protected_function &function, sol::state_view) {
+            sol::protected_function_result result =
+                function(std::ref(shapedGlyph), style, std::ref(fillColor),
+                         std::ref(outlineColor), outlineThickness);
+            throw_on_lua_error(result);
 
-      const sol::object returned = result;
-      if (is_nil_object(returned) || returned.get_type() != sol::type::table)
-        return;
+            const sol::object returned = result;
+            if (is_nil_object(returned) ||
+                returned.get_type() != sol::type::table)
+              return;
 
-      const sol::table table = returned.as<sol::table>();
-      const sol::object styleValue = table["style"];
-      const sol::object fillValue = table["fillColor"];
-      const sol::object outlineValue = table["outlineColor"];
-      const sol::object thicknessValue = table["outlineThickness"];
-      if (!is_nil_object(styleValue))
-        style = styleValue.as<std::uint32_t>();
-      if (!is_nil_object(fillValue))
-        fillColor = fillValue.as<sf::Color>();
-      if (!is_nil_object(outlineValue))
-        outlineColor = outlineValue.as<sf::Color>();
-      if (!is_nil_object(thicknessValue))
-        outlineThickness = thicknessValue.as<float>();
+            const sol::table table = returned.as<sol::table>();
+            const sol::object styleValue = table["style"];
+            const sol::object fillValue = table["fillColor"];
+            const sol::object outlineValue = table["outlineColor"];
+            const sol::object thicknessValue = table["outlineThickness"];
+            if (!is_nil_object(styleValue))
+              style = styleValue.as<std::uint32_t>();
+            if (!is_nil_object(fillValue))
+              fillColor = fillValue.as<sf::Color>();
+            if (!is_nil_object(outlineValue))
+              outlineColor = outlineValue.as<sf::Color>();
+            if (!is_nil_object(thicknessValue))
+              outlineThickness = thicknessValue.as<float>();
+          });
     };
   }
 };
@@ -534,15 +609,18 @@ template <> struct function_converter<bool(const void *, std::size_t)> {
     if (is_nil_object(object))
       return {};
 
-    sol::protected_function callback = object.as<sol::protected_function>();
-    return [callback = std::move(callback)](const void *data,
-                                            std::size_t size) mutable {
+    const LuaRegistryReference callback = makeLuaRegistryReference(object);
+    return [callback](const void *data, std::size_t size) {
       const auto *bytes = static_cast<const char *>(data);
       const std::string buffer =
           bytes && size != 0 ? std::string(bytes, bytes + size) : std::string{};
-      sol::protected_function_result result = callback(buffer, size);
-      throw_on_lua_error(result);
-      return result.get<bool>();
+      return withLuaRegistryCallback(
+          callback,
+          [&](sol::protected_function &function, sol::state_view) {
+            sol::protected_function_result result = function(buffer, size);
+            throw_on_lua_error(result);
+            return result.get<bool>();
+          });
     };
   }
 };
@@ -553,51 +631,54 @@ template <> struct function_converter<bool(void *, std::size_t &)> {
     if (is_nil_object(object))
       return {};
 
-    sol::protected_function callback = object.as<sol::protected_function>();
-    return [callback = std::move(callback)](void *data,
-                                            std::size_t &size) mutable {
-      sol::protected_function_result result = callback(size);
-      throw_on_lua_error(result);
+    const LuaRegistryReference callback = makeLuaRegistryReference(object);
+    return [callback](void *data, std::size_t &size) {
+      return withLuaRegistryCallback(
+          callback,
+          [&](sol::protected_function &function, sol::state_view lua) {
+            sol::protected_function_result result = function(size);
+            throw_on_lua_error(result);
 
-      const sol::object returned = result;
-      if (is_nil_object(returned)) {
-        size = 0;
-        return false;
-      }
+            const sol::object returned = result;
+            if (is_nil_object(returned)) {
+              size = 0;
+              return false;
+            }
 
-      bool keepGoing = true;
-      sol::object dataValue = returned;
-      if (returned.get_type() == sol::type::table) {
-        const sol::table table = returned.as<sol::table>();
-        const sol::object keepGoingValue = table["keepGoing"];
-        if (!is_nil_object(keepGoingValue))
-          keepGoing = keepGoingValue.as<bool>();
-        dataValue = table["data"];
-      } else if (returned.get_type() == sol::type::boolean) {
-        keepGoing = returned.as<bool>();
-        dataValue = sol::make_object(returned.lua_state(), LUASF_SOL_NIL);
-      }
+            bool keepGoing = true;
+            sol::object dataValue = returned;
+            if (returned.get_type() == sol::type::table) {
+              const sol::table table = returned.as<sol::table>();
+              const sol::object keepGoingValue = table["keepGoing"];
+              if (!is_nil_object(keepGoingValue))
+                keepGoing = keepGoingValue.as<bool>();
+              dataValue = table["data"];
+            } else if (returned.get_type() == sol::type::boolean) {
+              keepGoing = returned.as<bool>();
+              dataValue = sol::make_object(lua, LUASF_SOL_NIL);
+            }
 
-      if (!keepGoing || is_nil_object(dataValue)) {
-        size = 0;
-        return keepGoing;
-      }
+            if (!keepGoing || is_nil_object(dataValue)) {
+              size = 0;
+              return keepGoing;
+            }
 
-      std::vector<std::byte> bytes;
-      if (dataValue.get_type() == sol::type::string) {
-        const std::string text = dataValue.as<std::string>();
-        bytes.reserve(text.size());
-        for (unsigned char byte : text)
-          bytes.push_back(static_cast<std::byte>(byte));
-      } else {
-        bytes = array_from_object<std::byte>(dataValue);
-      }
+            std::vector<std::byte> bytes;
+            if (dataValue.get_type() == sol::type::string) {
+              const std::string text = dataValue.as<std::string>();
+              bytes.reserve(text.size());
+              for (unsigned char byte : text)
+                bytes.push_back(static_cast<std::byte>(byte));
+            } else {
+              bytes = array_from_object<std::byte>(dataValue);
+            }
 
-      const std::size_t copyCount =
-          std::min<std::size_t>(bytes.size(), static_cast<std::size_t>(size));
-      std::memcpy(data, bytes.data(), copyCount);
-      size = copyCount;
-      return true;
+            const std::size_t copyCount = std::min<std::size_t>(
+                bytes.size(), static_cast<std::size_t>(size));
+            std::memcpy(data, bytes.data(), copyCount);
+            size = copyCount;
+            return true;
+          });
     };
   }
 };

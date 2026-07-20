@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LuaStateLifecycle.hpp"
 #include "luasf_sol.hpp"
 #include <SFML/Audio/PlaybackDevice.hpp>
 #include <SFML/Graphics/Text.hpp>
@@ -171,11 +172,19 @@ void copyAudioFramesFromObject(const sol::object &object, float *frames,
 void updateAudioFrameCount(const sol::object &object, unsigned int &frameCount,
                            unsigned int frameCapacity);
 
+void passthroughAudioFrames(const float *inputFrames,
+                            unsigned int &inputFrameCount, float *outputFrames,
+                            unsigned int &outputFrameCount,
+                            unsigned int frameChannelCount) noexcept;
+
 template <typename Signature>
 std::function<Signature> function_from_object(const sol::object &object);
 
+template <typename Signature>
+std::function<Signature>
+function_from_object_at_native_thread_boundary(const sol::object &object);
+
 using LongLivedMemoryBuffer = std::shared_ptr<std::vector<std::byte>>;
-using LongLivedStreamObject = sol::object;
 
 LongLivedMemoryBuffer makeLongLivedMemoryBuffer(const sol::object &object);
 
@@ -183,7 +192,7 @@ void rememberLongLivedMemory(const void *owner, LongLivedMemoryBuffer buffer);
 
 void releaseLongLivedMemory(const void *owner);
 
-void rememberLongLivedStream(const void *owner, LongLivedStreamObject stream);
+void rememberLongLivedStream(const void *owner, const sol::object &stream);
 
 void releaseLongLivedStream(const void *owner);
 
@@ -195,19 +204,14 @@ void rememberLongLivedMemory(const T &owner, LongLivedMemoryBuffer buffer);
 template <typename T> void releaseLongLivedMemory(const T &owner);
 
 template <typename T>
-void rememberLongLivedStream(const T &owner, LongLivedStreamObject stream);
+void rememberLongLivedStream(const T &owner, const sol::object &stream);
 
 template <typename T> void releaseLongLivedStream(const T &owner);
 
 template <typename T> void releaseLongLivedResources(const T &owner);
 
-template <typename T> struct LongLivedMemoryDeleter {
-  void operator()(T *object) const noexcept;
-};
-
 template <typename T, typename... Args>
-std::unique_ptr<T, LongLivedMemoryDeleter<T>>
-makeLongLivedMemoryObject(Args &&...args);
+std::shared_ptr<T> makeLongLivedMemoryObject(Args &&...args);
 
 } // namespace lua_sf
 

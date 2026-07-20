@@ -6,16 +6,21 @@
 #include <SFML/Graphics/RenderStates.hpp>
 #include <SFML/Graphics/RenderTarget.hpp>
 
+#include <functional>
+
 namespace lua_sf {
 
 class LuaDrawable : public sf::Drawable {
 public:
-  explicit LuaDrawable(sol::protected_function drawCallback);
+  using DrawCallback =
+      std::function<void(sf::RenderTarget &, sf::RenderStates)>;
+
+  explicit LuaDrawable(DrawCallback drawCallback);
 
 private:
   void draw(sf::RenderTarget &target, sf::RenderStates states) const override;
 
-  sol::protected_function m_drawCallback;
+  DrawCallback m_drawCallback;
 };
 
 } // namespace lua_sf

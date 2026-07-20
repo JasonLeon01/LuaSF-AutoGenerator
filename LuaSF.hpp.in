@@ -13,7 +13,19 @@
 #endif
 
 struct lua_State;
+using LuaSFStateEnterHook = int (*)(lua_State* state, void* context);
+using LuaSFStateLeaveHook = void (*)(lua_State* state, void* context);
 
+extern "C" LUASF_API int LuaSF_initialize_state(lua_State* state);
+extern "C" LUASF_API int LuaSF_set_state_execution_hooks(
+    lua_State* state,
+    LuaSFStateEnterHook enterHook,
+    LuaSFStateLeaveHook leaveHook,
+    void* context);
+extern "C" LUASF_API void LuaSF_quiesce_state(lua_State* state) noexcept;
+extern "C" LUASF_API void LuaSF_shutdown_state(lua_State* state);
+extern "C" LUASF_API int LuaSF_enter_state(lua_State* state);
+extern "C" LUASF_API void LuaSF_leave_state(lua_State* state);
 extern "C" LUASF_API int {module_name}_register(lua_State* state);
 #if defined(LUASF_LUA_EXTENSION)
 extern "C" LUASF_API int luaopen_{module_name}(lua_State* state);
