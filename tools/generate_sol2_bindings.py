@@ -1548,8 +1548,8 @@ class Sol2Generator:
             "    {",
             f'        const sol::object aliasValue = {table_var}.raw_get<sol::object>("{name}");',
             f'        const sol::object aliasTarget = {table_var}.raw_get<sol::object>("{target_leaf}");',
-            "        if ((!aliasValue.valid() || aliasValue.get_type() == sol::type::nil) &&",
-            "            aliasTarget.valid() && aliasTarget.get_type() != sol::type::nil)",
+            "        if ((!aliasValue.valid() || aliasValue.get_type() == sol::type::lua_nil) &&",
+            "            aliasTarget.valid() && aliasTarget.get_type() != sol::type::lua_nil)",
             f'            {table_var}.raw_set("{name}", aliasTarget);',
             "    }",
         ]
