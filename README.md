@@ -50,6 +50,22 @@ sh collect_result.sh Release
 
 The collected packages are written to `output/result/embedded/` and `output/result/extension/`.
 
+To pack redistributable zip archives after collect:
+
+```bat
+pack_result.bat
+```
+
+```sh
+sh pack_result.sh
+```
+
+Archives are written to `output/packages/`:
+
+- `LuaSF-source.zip` — generated source project from `output/`, without `bin/` or `build/`
+- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.zip` — embedded package, for example `LuaSF-embedded-macOS-ARM64-clang.zip`
+- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.zip` — Lua extension package, for example `LuaSF-extension-Windows-x64-MSVC.zip`
+
 ## Use From A CMake Project
 
 There are three supported integration styles:

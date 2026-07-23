@@ -50,6 +50,22 @@ sh collect_result.sh Release
 
 收集后的包会写入 `output/result/embedded/` 和 `output/result/extension/`。
 
+收集完成后打包可分发 zip：
+
+```bat
+pack_result.bat
+```
+
+```sh
+sh pack_result.sh
+```
+
+压缩包会写入 `output/packages/`：
+
+- `LuaSF-source.zip` — 来自 `output/` 的生成源码工程，不含 `bin/` 和 `build/`
+- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.zip` — 嵌入式包，例如 `LuaSF-embedded-macOS-ARM64-clang.zip`
+- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.zip` — Lua 扩展包，例如 `LuaSF-extension-Windows-x64-MSVC.zip`
+
 ## 从 CMake 工程使用
 
 支持三种接入方式：
