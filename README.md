@@ -62,9 +62,11 @@ sh pack_result.sh
 
 Archives are written to `output/packages/`:
 
-- `LuaSF-source.zip` — generated source project from `output/`, without `bin/` or `build/`
-- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.zip` — embedded package, for example `LuaSF-embedded-macOS-ARM64-clang.zip`
-- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.zip` — Lua extension package, for example `LuaSF-extension-Windows-x64-MSVC.zip`
+- `LuaSF-source.{tar.gz|zip}` — generated source project from `output/`, without `bin/` or `build/`
+- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — embedded package
+- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — Lua extension package
+
+`pack_result.sh` creates `.tar.gz` archives. `pack_result.bat` creates `.zip` archives.
 
 ## Use From A CMake Project
 

@@ -12,8 +12,8 @@ EXTENSION_RESULT_DIR="$RESULT_DIR/extension"
 PACKAGES_DIR="$OUTPUT_DIR/packages"
 STAGING_DIR="$PACKAGES_DIR/.staging"
 
-if ! command -v zip >/dev/null 2>&1; then
-    echo "Missing zip. Install zip and retry." >&2
+if ! command -v tar >/dev/null 2>&1; then
+    echo "Missing tar. Install tar and retry." >&2
     exit 1
 fi
 
@@ -110,9 +110,9 @@ SOURCE_NAME=LuaSF-source
 EMBEDDED_NAME="LuaSF-embedded-${PLATFORM_TAG}"
 EXTENSION_NAME="LuaSF-extension-${PLATFORM_TAG}"
 
-SOURCE_ZIP="$PACKAGES_DIR/${SOURCE_NAME}.zip"
-EMBEDDED_ZIP="$PACKAGES_DIR/${EMBEDDED_NAME}.zip"
-EXTENSION_ZIP="$PACKAGES_DIR/${EXTENSION_NAME}.zip"
+SOURCE_ARCHIVE="$PACKAGES_DIR/${SOURCE_NAME}.tar.gz"
+EMBEDDED_ARCHIVE="$PACKAGES_DIR/${EMBEDDED_NAME}.tar.gz"
+EXTENSION_ARCHIVE="$PACKAGES_DIR/${EXTENSION_NAME}.tar.gz"
 
 echo "Packing LuaSF redistributable archives..."
 echo "Platform: $PLATFORM_TAG"
@@ -134,15 +134,15 @@ cp -R "$EXTENSION_RESULT_DIR"/. "$STAGING_DIR/$EXTENSION_NAME"/
 
 (
     cd "$STAGING_DIR"
-    zip -r -q "$SOURCE_ZIP" "$SOURCE_NAME"
-    zip -r -q "$EMBEDDED_ZIP" "$EMBEDDED_NAME"
-    zip -r -q "$EXTENSION_ZIP" "$EXTENSION_NAME"
+    tar -czf "$SOURCE_ARCHIVE" "$SOURCE_NAME"
+    tar -czf "$EMBEDDED_ARCHIVE" "$EMBEDDED_NAME"
+    tar -czf "$EXTENSION_ARCHIVE" "$EXTENSION_NAME"
 )
 
 rm -rf "$STAGING_DIR"
 
 echo
 echo "Done."
-echo "Source: $SOURCE_ZIP"
-echo "Embedded: $EMBEDDED_ZIP"
-echo "Extension: $EXTENSION_ZIP"
+echo "Source: $SOURCE_ARCHIVE"
+echo "Embedded: $EMBEDDED_ARCHIVE"
+echo "Extension: $EXTENSION_ARCHIVE"

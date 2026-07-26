@@ -62,9 +62,11 @@ sh pack_result.sh
 
 压缩包会写入 `output/packages/`：
 
-- `LuaSF-source.zip` — 来自 `output/` 的生成源码工程，不含 `bin/` 和 `build/`
-- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.zip` — 嵌入式包，例如 `LuaSF-embedded-macOS-ARM64-clang.zip`
-- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.zip` — Lua 扩展包，例如 `LuaSF-extension-Windows-x64-MSVC.zip`
+- `LuaSF-source.{tar.gz|zip}` — 来自 `output/` 的生成源码工程，不含 `bin/` 和 `build/`
+- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — 嵌入式包
+- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — Lua 扩展包
+
+`pack_result.sh` 生成 `.tar.gz` 压缩包，`pack_result.bat` 生成 `.zip` 压缩包。
 
 ## 从 CMake 工程使用
 
