@@ -25,12 +25,13 @@ if not exist "third_party\SFML\CMakeLists.txt" (
     echo Using existing third_party\SFML.
 )
 
-if not exist "third_party\Lua\lua.h" (
+if not exist "third_party\Lua\src\lua.h" (
     call "%~dp0download_lib.bat" "Lua" ^
-        "https://github.com/lua/lua/archive/refs/tags/v%LUA_VERSION%.zip" ^
-        "lua.zip" ^
+        "https://www.lua.org/ftp/lua-%LUA_VERSION%.tar.gz" ^
+        "lua.tar.gz" ^
         "lua-%LUA_VERSION%" ^
-        "Lua"
+        "Lua" ^
+        "%LUA_SHA256%"
     if errorlevel 1 exit /b 1
 ) else (
     echo Using existing third_party\Lua.

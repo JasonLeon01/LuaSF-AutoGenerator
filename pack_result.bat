@@ -79,17 +79,17 @@ for /f "delims=" %%I in ('dir /b /a "%OUTPUT_DIR%"') do (
 xcopy /e /i /q /y "%EMBEDDED_RESULT_DIR%\*" "%STAGING_DIR%\%EMBEDDED_NAME%\" >nul
 xcopy /e /i /q /y "%EXTENSION_RESULT_DIR%\*" "%STAGING_DIR%\%EXTENSION_NAME%\" >nul
 
-tar -a -c -f "%SOURCE_ZIP%" -C "%STAGING_DIR%" "%SOURCE_NAME%"
+powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%SOURCE_NAME%' -DestinationPath '%SOURCE_ZIP%' -CompressionLevel Optimal"
 if errorlevel 1 (
     echo Failed to create "%SOURCE_ZIP%".
     exit /b 1
 )
-tar -a -c -f "%EMBEDDED_ZIP%" -C "%STAGING_DIR%" "%EMBEDDED_NAME%"
+powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%EMBEDDED_NAME%' -DestinationPath '%EMBEDDED_ZIP%' -CompressionLevel Optimal"
 if errorlevel 1 (
     echo Failed to create "%EMBEDDED_ZIP%".
     exit /b 1
 )
-tar -a -c -f "%EXTENSION_ZIP%" -C "%STAGING_DIR%" "%EXTENSION_NAME%"
+powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%EXTENSION_NAME%' -DestinationPath '%EXTENSION_ZIP%' -CompressionLevel Optimal"
 if errorlevel 1 (
     echo Failed to create "%EXTENSION_ZIP%".
     exit /b 1

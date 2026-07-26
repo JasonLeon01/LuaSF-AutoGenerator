@@ -17,7 +17,7 @@ if [ ! -f "third_party/SFML/CMakeLists.txt" ]; then
     exit 1
 fi
 
-if [ ! -f "third_party/Lua/lua.h" ]; then
+if [ ! -f "third_party/Lua/src/lua.h" ]; then
     echo "Missing third_party/Lua. Run sh init.sh first." >&2
     exit 1
 fi
@@ -64,7 +64,7 @@ if [ -z "$BUILD_CONFIG" ]; then
     exit 1
 fi
 
-echo "Building embedded LuaSF, Lua extension, and Lua stub from output CMake project..."
+echo "Building embedded LuaSF, Lua extension, host luac, and Lua stub from output CMake project..."
 cmake --build output/build --config "$BUILD_CONFIG" --target LuaSF_build_outputs --parallel 1
 
 EMBEDDED_MODULE_FILE=$(find output/build/bin -path "*/embedded/*" \( -type f -o -type l \) \( -name 'LuaSF.dll' -o -name 'LuaSF.dylib' -o -name 'LuaSF.so' \) 2>/dev/null | head -n 1 || true)

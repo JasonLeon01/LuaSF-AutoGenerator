@@ -1,40 +1,47 @@
 @echo off
-:: download_lib.bat — Download, extract, and rename a GitHub-hosted zip archive.
-::
-:: Usage:
-::   call download_lib.bat <DisplayName> <URL> <ZipFile> <ExtractedFolder> <TargetFolder>
-::
-:: Parameters:
-::   DisplayName     — Human-readable name shown in log messages  (e.g. SFML)
-::   URL             — Full download URL
-::   ZipFile         — Local filename for the downloaded zip      (e.g. sfml.zip)
-::   ExtractedFolder — Folder name GitHub creates inside third_party after extraction
-::   TargetFolder    — Desired final folder name inside third_party
+rem download_lib.bat - Download, verify, extract, and rename a source archive.
+rem
+rem Usage:
+rem   call download_lib.bat DisplayName URL ArchiveFile ExtractedFolder TargetFolder [SHA256]
 
 setlocal
 
 set "LIB_NAME=%~1"
 set "URL=%~2"
-set "ZIP=%~3"
+set "ARCHIVE=%~3"
 set "SRC_FOLDER=%~4"
 set "DEST_FOLDER=%~5"
+set "EXPECTED_SHA256=%~6"
 
 echo Downloading %LIB_NAME%...
-powershell -Command "Invoke-WebRequest -Uri '%URL%' -OutFile '%ZIP%'"
+powershell -Command "Invoke-WebRequest -Uri '%URL%' -OutFile '%ARCHIVE%'"
 if errorlevel 1 (
     echo Failed to download %LIB_NAME%.
     exit /b 1
 )
 
+if not "%EXPECTED_SHA256%"=="" (
+    echo Verifying %LIB_NAME% SHA-256...
+    powershell -Command "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath '%ARCHIVE%').Hash.ToLowerInvariant(); if ($actual -ne '%EXPECTED_SHA256%') { Write-Error ('SHA-256 mismatch: ' + $actual); exit 1 }"
+    if errorlevel 1 (
+        del "%ARCHIVE%"
+        exit /b 1
+    )
+)
+
 echo Extracting %LIB_NAME%...
-powershell -Command "Expand-Archive -Path '%ZIP%' -DestinationPath 'third_party' -Force"
+if /I "%ARCHIVE:~-7%"==".tar.gz" (
+    tar -xzf "%ARCHIVE%" -C third_party
+) else (
+    powershell -Command "Expand-Archive -Path '%ARCHIVE%' -DestinationPath 'third_party' -Force"
+)
 if errorlevel 1 (
     echo Failed to extract %LIB_NAME%.
-    del "%ZIP%"
+    del "%ARCHIVE%"
     exit /b 1
 )
 
-del "%ZIP%"
+del "%ARCHIVE%"
 
 if exist "third_party\%SRC_FOLDER%" (
     ren "third_party\%SRC_FOLDER%" "%DEST_FOLDER%"

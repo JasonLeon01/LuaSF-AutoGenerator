@@ -21,7 +21,7 @@ if not exist "third_party\SFML\CMakeLists.txt" (
     exit /b 1
 )
 
-if not exist "third_party\Lua\lua.h" (
+if not exist "third_party\Lua\src\lua.h" (
     echo Missing third_party\Lua. Run init.bat first.
     exit /b 1
 )
@@ -65,7 +65,7 @@ if "%BUILD_CONFIG%"=="" (
     exit /b 1
 )
 
-echo Building embedded LuaSF, Lua extension, and Lua stub from output CMake project...
+echo Building embedded LuaSF, Lua extension, host luac, and Lua stub from output CMake project...
 cmake --build output\build --config %BUILD_CONFIG% --target LuaSF_build_outputs --parallel 1
 if errorlevel 1 exit /b 1
 

@@ -135,7 +135,7 @@ add_executable(SFLua main.cpp)
 target_compile_features(SFLua PRIVATE cxx_std_17)
 
 target_include_directories(SFLua PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/LuaSF/third_party/Lua"
+    "${CMAKE_CURRENT_SOURCE_DIR}/LuaSF/third_party/Lua/src"
 )
 
 target_compile_definitions(SFLua PRIVATE

@@ -231,6 +231,12 @@ template <typename T> T object_as(const sol::object &object) {
     return to_sf_string(object.as<std::string>());
   } else if constexpr (std::is_same_v<U, std::filesystem::path>) {
     return std::filesystem::path(object.as<std::string>());
+#if defined(LUASF_IOS_COMPAT)
+  } else if constexpr (std::is_same_v<U, std::filesystem::file_time_type>) {
+    using Duration = typename U::duration;
+    using Rep = typename U::duration::rep;
+    return U(Duration(static_cast<Rep>(object.as<lua_Integer>())));
+#endif
   } else if constexpr (is_lua_integral_v<U>) {
     return object.as<LuaIntegral<U>>().value();
   } else if constexpr (std::is_same_v<U, std::byte>) {
@@ -291,6 +297,11 @@ sol::object as_lua_object(sol::state_view lua, const T &value) {
     return sol::make_object(lua, to_utf8_string(value));
   } else if constexpr (std::is_same_v<U, std::filesystem::path>) {
     return sol::make_object(lua, value.string());
+#if defined(LUASF_IOS_COMPAT)
+  } else if constexpr (std::is_same_v<U, std::filesystem::file_time_type>) {
+    return sol::make_object(
+        lua, static_cast<lua_Integer>(value.time_since_epoch().count()));
+#endif
   } else if constexpr (is_std_vector_v<U>) {
     return vector_to_object(lua, value);
   } else {

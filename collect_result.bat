@@ -40,6 +40,8 @@ if not exist "%EXTENSION_BIN_DIR%" set "EXTENSION_BIN_DIR=%BUILD_DIR%\bin\extens
 set "EMBEDDED_LIB_DIR=%BUILD_DIR%\lib\%CONFIG%\embedded"
 if not exist "%EMBEDDED_LIB_DIR%" set "EMBEDDED_LIB_DIR=%BUILD_DIR%\lib\embedded\%CONFIG%"
 if not exist "%EMBEDDED_LIB_DIR%" set "EMBEDDED_LIB_DIR=%LIB_DIR%"
+set "LUAC_FILE=%BUILD_DIR%\tools\%CONFIG%\luac.exe"
+if not exist "%LUAC_FILE%" set "LUAC_FILE=%BUILD_DIR%\tools\luac.exe"
 
 set "STUB_FILE=%BUILD_DIR%\LuaSF.lua"
 
@@ -61,13 +63,19 @@ if not exist "%STUB_FILE%" (
     exit /b 1
 )
 
+if not exist "%LUAC_FILE%" (
+    echo Missing host luac under "%BUILD_DIR%\tools".
+    echo Run build.bat %CONFIG% first.
+    exit /b 1
+)
+
 echo Collecting LuaSF build result...
 echo Config: %CONFIG%
 echo Source: %BUILD_DIR%
 echo Result: %RESULT_DIR%
 
 if exist "%RESULT_DIR%" rmdir /s /q "%RESULT_DIR%"
-mkdir "%EMBEDDED_RESULT_DIR%\bin" "%EMBEDDED_RESULT_DIR%\include" "%EMBEDDED_RESULT_DIR%\stub" "%EXTENSION_RESULT_DIR%\bin" "%EXTENSION_RESULT_DIR%\stub" >nul
+mkdir "%EMBEDDED_RESULT_DIR%\bin" "%EMBEDDED_RESULT_DIR%\include" "%EMBEDDED_RESULT_DIR%\stub" "%EMBEDDED_RESULT_DIR%\tools" "%EXTENSION_RESULT_DIR%\bin" "%EXTENSION_RESULT_DIR%\stub" >nul
 
 copy /y "%EMBEDDED_BIN_DIR%\*.dll" "%EMBEDDED_RESULT_DIR%\bin\" >nul
 if errorlevel 1 (
@@ -101,6 +109,11 @@ if errorlevel 1 (
     echo Failed to copy Lua extension stub.
     exit /b 1
 )
+copy /y "%LUAC_FILE%" "%EMBEDDED_RESULT_DIR%\tools\luac.exe" >nul
+if errorlevel 1 (
+    echo Failed to copy host luac.
+    exit /b 1
+)
 
 if exist "%OUTPUT_DIR%\include" (
     robocopy "%OUTPUT_DIR%\include" "%EMBEDDED_RESULT_DIR%\include" /E /NFL /NDL /NJH /NJS /NP >nul
@@ -122,11 +135,11 @@ if exist "%OUTPUT_DIR%\third_party\sol2\include" (
     if errorlevel 8 exit /b 1
 )
 
-if exist "%OUTPUT_DIR%\third_party\Lua" (
+if exist "%OUTPUT_DIR%\third_party\Lua\src" (
     mkdir "%EMBEDDED_RESULT_DIR%\include\lua" >nul 2>nul
-    copy /y "%OUTPUT_DIR%\third_party\Lua\*.h" "%EMBEDDED_RESULT_DIR%\include\lua\" >nul
+    copy /y "%OUTPUT_DIR%\third_party\Lua\src\*.h" "%EMBEDDED_RESULT_DIR%\include\lua\" >nul
     if errorlevel 1 exit /b 1
-    copy /y "%OUTPUT_DIR%\third_party\Lua\*.hpp" "%EMBEDDED_RESULT_DIR%\include\lua\" >nul 2>nul
+    copy /y "%OUTPUT_DIR%\third_party\Lua\src\*.hpp" "%EMBEDDED_RESULT_DIR%\include\lua\" >nul 2>nul
     call :write_lua_compat_header lua.h
     call :write_lua_compat_header lauxlib.h
     call :write_lua_compat_header lualib.h
@@ -183,6 +196,9 @@ if errorlevel 1 (
     echo.
     echo stub:
     dir /b "%EMBEDDED_RESULT_DIR%\stub"
+    echo.
+    echo tools:
+    dir /b "%EMBEDDED_RESULT_DIR%\tools"
     echo.
     echo include:
     echo - LuaSF generated headers from output\include
@@ -244,6 +260,7 @@ echo Lua extension DLLs: %EXTENSION_RESULT_DIR%\bin
 echo Embedded stub: %EMBEDDED_RESULT_DIR%\stub\LuaSF.lua
 echo Extension stub: %EXTENSION_RESULT_DIR%\stub\LuaSF.lua
 echo Headers: %EMBEDDED_RESULT_DIR%\include
+echo Host luac: %EMBEDDED_RESULT_DIR%\tools\luac.exe
 
 endlocal
 exit /b 0

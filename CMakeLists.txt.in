@@ -17,6 +17,14 @@ set(LUASF_EXTENSION_ARCHIVE_DIR "${{LUASF_BINARY_ROOT}}/lib/$<CONFIG>/extension"
 
 option(LUASF_BUILD_SHARED_SFML "Build SFML as shared libraries for LuaSF" ON)
 option(LUASF_GENERATE_LUA_STUB "Generate Lua language-server stub from the built LuaSF module" ON)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(LUASF_BUILD_SHARED_SFML OFF CACHE BOOL "Build SFML as shared libraries for LuaSF" FORCE)
+    set(LUASF_LIBRARY_TYPE STATIC)
+    set(LUASF_EXTENSION_LIBRARY_TYPE STATIC)
+else()
+    set(LUASF_LIBRARY_TYPE SHARED)
+    set(LUASF_EXTENSION_LIBRARY_TYPE MODULE)
+endif()
 if(NOT DEFINED LUASF_LUA_STUB_OUTPUT)
     set(LUASF_LUA_STUB_OUTPUT "${{LUASF_BINARY_ROOT}}/{module_name}.lua")
 endif()
@@ -60,24 +68,31 @@ endif()
 set(LUASF_LUA_TARGET "{target_name}_lua_shared")
 if(NOT TARGET ${{LUASF_LUA_TARGET}})
     file(GLOB LUA_SOURCES CONFIGURE_DEPENDS
-        "${{LUASF_ROOT}}/third_party/Lua/*.c"
+        "${{LUASF_ROOT}}/third_party/Lua/src/*.c"
     )
     list(REMOVE_ITEM LUA_SOURCES
-        "${{LUASF_ROOT}}/third_party/Lua/lua.c"
-        "${{LUASF_ROOT}}/third_party/Lua/luac.c"
-        "${{LUASF_ROOT}}/third_party/Lua/onelua.c"
-        "${{LUASF_ROOT}}/third_party/Lua/ltests.c"
+        "${{LUASF_ROOT}}/third_party/Lua/src/lua.c"
+        "${{LUASF_ROOT}}/third_party/Lua/src/luac.c"
+        "${{LUASF_ROOT}}/third_party/Lua/src/onelua.c"
+        "${{LUASF_ROOT}}/third_party/Lua/src/ltests.c"
     )
 
-    add_library(${{LUASF_LUA_TARGET}} SHARED ${{LUA_SOURCES}})
+    add_library(${{LUASF_LUA_TARGET}} ${{LUASF_LIBRARY_TYPE}} ${{LUA_SOURCES}})
     target_include_directories(${{LUASF_LUA_TARGET}} PUBLIC
-        "${{LUASF_ROOT}}/third_party/Lua"
+        "${{LUASF_ROOT}}/third_party/Lua/src"
     )
     if(WIN32)
         target_compile_definitions(${{LUASF_LUA_TARGET}}
             PRIVATE LUA_BUILD_AS_DLL LUA_CORE
             INTERFACE LUA_BUILD_AS_DLL
         )
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_compile_definitions(${{LUASF_LUA_TARGET}} PRIVATE LUA_USE_IOS)
+    elseif(APPLE)
+        target_compile_definitions(${{LUASF_LUA_TARGET}} PRIVATE LUA_USE_MACOSX)
+    elseif(UNIX)
+        target_compile_definitions(${{LUASF_LUA_TARGET}} PRIVATE LUA_USE_LINUX)
+        target_link_libraries(${{LUASF_LUA_TARGET}} PRIVATE m ${{CMAKE_DL_LIBS}})
     endif()
     set_target_properties(${{LUASF_LUA_TARGET}} PROPERTIES
         C_STANDARD 99
@@ -86,6 +101,28 @@ if(NOT TARGET ${{LUASF_LUA_TARGET}})
         RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
         LIBRARY_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
         ARCHIVE_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/lib"
+    )
+endif()
+
+if(NOT CMAKE_CROSSCOMPILING AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable({target_name}_luac
+        "${{LUASF_ROOT}}/third_party/Lua/src/luac.c"
+        ${{LUA_SOURCES}}
+    )
+    target_include_directories({target_name}_luac PRIVATE
+        "${{LUASF_ROOT}}/third_party/Lua/src"
+    )
+    if(APPLE)
+        target_compile_definitions({target_name}_luac PRIVATE LUA_USE_MACOSX)
+    elseif(UNIX)
+        target_compile_definitions({target_name}_luac PRIVATE LUA_USE_LINUX)
+        target_link_libraries({target_name}_luac PRIVATE m ${{CMAKE_DL_LIBS}})
+    endif()
+    set_target_properties({target_name}_luac PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        OUTPUT_NAME "luac"
+        RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/tools"
     )
 endif()
 
@@ -112,29 +149,38 @@ configure_file(
     "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/sol.hpp"
     COPYONLY
 )
-file(WRITE "${{LUASF_SOL_COMPAT_INCLUDE}}/lua.h"
-"#include \"${{LUASF_ROOT}}/third_party/Lua/lua.h\"
+file(CONFIGURE
+    OUTPUT "${{LUASF_SOL_COMPAT_INCLUDE}}/lua.h"
+    CONTENT "#include \"@LUASF_ROOT@/third_party/Lua/src/lua.h\"
 #undef LUA_VERSION_NUM
 #define LUA_VERSION_NUM 504
 #undef lua_newstate
 #define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
 "
+    @ONLY
+    NEWLINE_STYLE UNIX
 )
-file(WRITE "${{LUASF_SOL_COMPAT_INCLUDE}}/lauxlib.h"
-"#include \"${{LUASF_ROOT}}/third_party/Lua/lauxlib.h\"
+file(CONFIGURE
+    OUTPUT "${{LUASF_SOL_COMPAT_INCLUDE}}/lauxlib.h"
+    CONTENT "#include \"@LUASF_ROOT@/third_party/Lua/src/lauxlib.h\"
 #undef LUA_VERSION_NUM
 #define LUA_VERSION_NUM 504
 #undef lua_newstate
 #define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
 "
+    @ONLY
+    NEWLINE_STYLE UNIX
 )
-file(WRITE "${{LUASF_SOL_COMPAT_INCLUDE}}/lualib.h"
-"#include \"${{LUASF_ROOT}}/third_party/Lua/lualib.h\"
+file(CONFIGURE
+    OUTPUT "${{LUASF_SOL_COMPAT_INCLUDE}}/lualib.h"
+    CONTENT "#include \"@LUASF_ROOT@/third_party/Lua/src/lualib.h\"
 #undef LUA_VERSION_NUM
 #define LUA_VERSION_NUM 504
 #undef lua_newstate
 #define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
 "
+    @ONLY
+    NEWLINE_STYLE UNIX
 )
 
 set(LUASF_BINDING_HEADERS
@@ -142,12 +188,12 @@ set(LUASF_BINDING_HEADERS
     "{public_header}"
 )
 
-add_library({target_name} SHARED
+add_library({target_name} ${{LUASF_LIBRARY_TYPE}}
     ${{LUASF_BINDING_SOURCES}}
     ${{LUASF_BINDING_HEADERS}}
 )
 
-add_library({target_name}_lua_extension MODULE EXCLUDE_FROM_ALL
+add_library({target_name}_lua_extension ${{LUASF_EXTENSION_LIBRARY_TYPE}} EXCLUDE_FROM_ALL
     ${{LUASF_BINDING_SOURCES}}
     ${{LUASF_BINDING_HEADERS}}
 )
@@ -162,7 +208,7 @@ function(luasf_configure_binding_target target_name output_dir archive_dir)
             "${{LUASF_SOL_COMPAT_INCLUDE}}"
             "${{LUASF_ROOT}}/include"
             "${{LUASF_ROOT}}/third_party/SFML/include"
-            "${{LUASF_ROOT}}/third_party/Lua"
+            "${{LUASF_ROOT}}/third_party/Lua/src"
             "${{LUASF_ROOT}}/third_party/sol2/include"
     )
 
@@ -382,6 +428,10 @@ luasf_add_lua_stub({target_name})
 add_custom_target({target_name}_build_outputs
     DEPENDS {target_name} {target_name}_lua_extension
 )
+if(TARGET {target_name}_luac)
+    add_dependencies({target_name} {target_name}_luac)
+    add_dependencies({target_name}_build_outputs {target_name}_luac)
+endif()
 if(TARGET {target_name}_lua_stub)
     add_dependencies({target_name}_build_outputs {target_name}_lua_stub)
 endif()

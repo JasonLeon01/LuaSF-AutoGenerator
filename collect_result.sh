@@ -59,6 +59,7 @@ if [ ! -d "$EMBEDDED_LIB_DIR" ]; then
 fi
 
 STUB_FILE="$BUILD_DIR/LuaSF.lua"
+LUAC_FILE=$(find "$BUILD_DIR/tools" -maxdepth 2 \( -type f -o -type l \) \( -name 'luac' -o -name 'luac.exe' \) 2>/dev/null | head -n 1 || true)
 
 find_embedded_module_file() {
     find "$EMBEDDED_BIN_DIR" -maxdepth 1 \( -type f -o -type l \) \( -name 'LuaSF.dll' -o -name 'LuaSF.dylib' -o -name 'LuaSF.so' \) 2>/dev/null | head -n 1
@@ -84,6 +85,12 @@ fi
 
 if [ ! -f "$STUB_FILE" ]; then
     echo "Missing Lua stub $STUB_FILE." >&2
+    echo "Run sh build.sh $CONFIG first." >&2
+    exit 1
+fi
+
+if [ -z "$LUAC_FILE" ]; then
+    echo "Missing host luac under $BUILD_DIR/tools." >&2
     echo "Run sh build.sh $CONFIG first." >&2
     exit 1
 fi
@@ -149,6 +156,7 @@ mkdir -p \
     "$EMBEDDED_RESULT_DIR/bin" \
     "$EMBEDDED_RESULT_DIR/include" \
     "$EMBEDDED_RESULT_DIR/stub" \
+    "$EMBEDDED_RESULT_DIR/tools" \
     "$EXTENSION_RESULT_DIR/bin" \
     "$EXTENSION_RESULT_DIR/stub"
 
@@ -170,16 +178,17 @@ fi
 
 cp "$STUB_FILE" "$EMBEDDED_RESULT_DIR/stub/"
 cp "$STUB_FILE" "$EXTENSION_RESULT_DIR/stub/"
+cp "$LUAC_FILE" "$EMBEDDED_RESULT_DIR/tools/"
 
 copy_tree_contents "$OUTPUT_DIR/include" "$EMBEDDED_RESULT_DIR/include"
 copy_tree_contents "$BUILD_DIR/generated_include/sol" "$EMBEDDED_RESULT_DIR/include/sol"
 copy_tree_contents "$OUTPUT_DIR/third_party/SFML/include" "$EMBEDDED_RESULT_DIR/include"
 copy_tree_contents "$OUTPUT_DIR/third_party/sol2/include" "$EMBEDDED_RESULT_DIR/include"
 
-if [ -d "$OUTPUT_DIR/third_party/Lua" ]; then
+if [ -d "$OUTPUT_DIR/third_party/Lua/src" ]; then
     mkdir -p "$EMBEDDED_RESULT_DIR/include/lua"
-    cp "$OUTPUT_DIR"/third_party/Lua/*.h "$EMBEDDED_RESULT_DIR/include/lua/"
-    for header in "$OUTPUT_DIR"/third_party/Lua/*.hpp; do
+    cp "$OUTPUT_DIR"/third_party/Lua/src/*.h "$EMBEDDED_RESULT_DIR/include/lua/"
+    for header in "$OUTPUT_DIR"/third_party/Lua/src/*.hpp; do
         [ -e "$header" ] || continue
         cp "$header" "$EMBEDDED_RESULT_DIR/include/lua/"
     done
@@ -215,6 +224,9 @@ cp "cmake/result_README.md" "$EMBEDDED_RESULT_DIR/README.md"
     echo
     echo "stub:"
     ls -1 "$EMBEDDED_RESULT_DIR/stub"
+    echo
+    echo "tools:"
+    ls -1 "$EMBEDDED_RESULT_DIR/tools"
     echo
     echo "include:"
     echo "- LuaSF generated headers from output/include"
@@ -275,3 +287,4 @@ echo "Lua extension libraries: $EXTENSION_RESULT_DIR/bin"
 echo "Embedded stub: $EMBEDDED_RESULT_DIR/stub/LuaSF.lua"
 echo "Extension stub: $EXTENSION_RESULT_DIR/stub/LuaSF.lua"
 echo "Headers: $EMBEDDED_RESULT_DIR/include"
+echo "Host luac: $EMBEDDED_RESULT_DIR/tools/$(basename "$LUAC_FILE")"

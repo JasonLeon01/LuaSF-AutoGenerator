@@ -9,6 +9,7 @@ VENV_PYTHON=".venv/bin/python"
 
 SFML_VERSION=
 LUA_VERSION=
+LUA_SHA256=
 SOL2_VERSION=
 
 while IFS='=' read -r key value; do
@@ -17,11 +18,12 @@ while IFS='=' read -r key value; do
         ''|'#'*) continue ;;
         SFML_VERSION) SFML_VERSION=$value ;;
         LUA_VERSION) LUA_VERSION=$value ;;
+        LUA_SHA256) LUA_SHA256=$value ;;
         SOL2_VERSION) SOL2_VERSION=$value ;;
     esac
 done < versions.conf
 
-if [ -z "$SFML_VERSION" ] || [ -z "$LUA_VERSION" ] || [ -z "$SOL2_VERSION" ]; then
+if [ -z "$SFML_VERSION" ] || [ -z "$LUA_VERSION" ] || [ -z "$LUA_SHA256" ] || [ -z "$SOL2_VERSION" ]; then
     echo "Missing required versions in versions.conf." >&2
     exit 1
 fi
@@ -44,12 +46,13 @@ else
     echo "Using existing third_party/SFML."
 fi
 
-if [ ! -f "third_party/Lua/lua.h" ]; then
+if [ ! -f "third_party/Lua/src/lua.h" ]; then
     sh "$SCRIPT_DIR/download_lib.sh" "Lua" \
-        "https://github.com/lua/lua/archive/refs/tags/v$LUA_VERSION.tar.gz" \
+        "https://www.lua.org/ftp/lua-$LUA_VERSION.tar.gz" \
         "lua.tar.gz" \
         "lua-$LUA_VERSION" \
-        "Lua"
+        "Lua" \
+        "$LUA_SHA256"
 else
     echo "Using existing third_party/Lua."
 fi
