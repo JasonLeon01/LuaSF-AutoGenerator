@@ -16,9 +16,9 @@ if errorlevel 1 exit /b 1
 
 if not exist "third_party\SFML\CMakeLists.txt" (
     call "%~dp0download_lib.bat" "SFML" ^
-        "https://github.com/SFML/SFML/archive/refs/tags/%SFML_VERSION%.zip" ^
+        "https://github.com/%SFML_REPOSITORY%/archive/refs/heads/%SFML_BRANCH%.zip" ^
         "sfml.zip" ^
-        "SFML-%SFML_VERSION%" ^
+        "SFML-ME-%SFML_BRANCH%" ^
         "SFML"
     if errorlevel 1 exit /b 1
 ) else (

@@ -4,7 +4,7 @@ rem
 rem Usage:
 rem   call download_lib.bat DisplayName URL ArchiveFile ExtractedFolder TargetFolder [SHA256]
 
-setlocal
+setlocal EnableDelayedExpansion
 
 set "LIB_NAME=%~1"
 set "URL=%~2"
@@ -22,8 +22,13 @@ if errorlevel 1 (
 
 if not "%EXPECTED_SHA256%"=="" (
     echo Verifying %LIB_NAME% SHA-256...
-    powershell -Command "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath '%ARCHIVE%').Hash.ToLowerInvariant(); if ($actual -ne '%EXPECTED_SHA256%') { Write-Error ('SHA-256 mismatch: ' + $actual); exit 1 }"
-    if errorlevel 1 (
+    set "ACTUAL_SHA256="
+    for /f "skip=1 delims=" %%H in ('certutil -hashfile "%ARCHIVE%" SHA256') do (
+        if not defined ACTUAL_SHA256 set "ACTUAL_SHA256=%%H"
+    )
+    set "ACTUAL_SHA256=!ACTUAL_SHA256: =!"
+    if /I not "!ACTUAL_SHA256!"=="%EXPECTED_SHA256%" (
+        echo SHA-256 mismatch: !ACTUAL_SHA256!
         del "%ARCHIVE%"
         exit /b 1
     )

@@ -254,7 +254,7 @@ Bundled dependency versions are recorded in `versions.conf`. Their licenses are:
 
 | Dependency | Version | License |
 | --- | --- | --- |
-| [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME/tree/310ME) | `310ME` branch | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 | [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
 

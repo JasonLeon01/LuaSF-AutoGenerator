@@ -254,7 +254,7 @@ LuaSF 会被构建为动态库。运行时，可执行程序必须能够加载 L
 
 | 依赖 | 版本 | 许可证 |
 | --- | --- | --- |
-| [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME/tree/310ME) | `310ME` 分支 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 | [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
 
