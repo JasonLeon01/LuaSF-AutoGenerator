@@ -128,7 +128,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(SFLua LANGUAGES C CXX)
 
-set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/LuaSF.lua")
+set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/stub/LuaSF.d.lua")
 
 add_subdirectory(LuaSF)
 
@@ -234,11 +234,13 @@ end
 
 - `LuaSF::LuaSF`：导入的 LuaSF 动态库 target。
 - `LuaSF::Lua`：导入的打包 Lua 动态库 target。
-- `LUASF_STUB_FILE`：指向 `stub/LuaSF.lua` 的绝对路径。
+- `LUASF_STUB_FILE`：指向 `stub/LuaSF.d.lua` 的绝对路径。
 - `LUASF_RUNTIME_FILES`：运行时需要放到可执行文件旁边的打包文件。
 - `LUASF_RUNTIME_DLLS`：`LUASF_RUNTIME_FILES` 的兼容别名。
 - `luasf_copy_runtime_files(target)`：用于复制所有打包运行时文件的 post-build helper。
 - `luasf_copy_runtime_dlls(target)`：`luasf_copy_runtime_files(target)` 的兼容别名。
+
+生成的 `.d.lua` 是全局声明文件，以 `---@meta` 开头；EmmyLua 可从独立 stub 库目录中暴露其中的 `sf` API。
 
 ## 运行时说明
 

@@ -8,6 +8,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("y", "integer");
   LUASF_STUB_FUNCTION("sf.Vector2i", "new",
                       "fun(x: integer, y: integer): sf.Vector2i");
+  LUASF_STUB_OVERLOAD("sf.Vector2i", "new", "fun(): sf.Vector2i");
   LUASF_STUB_FUNCTION("sf.Vector2i", "unpack",
                       "fun(self: sf.Vector2i): integer, integer");
   LUASF_STUB_FUNCTION("sf.Vector2i", "lengthSquared",
@@ -34,6 +35,9 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("y", "number");
   LUASF_STUB_FUNCTION("sf.Vector2f", "new",
                       "fun(x: number, y: number): sf.Vector2f");
+  LUASF_STUB_OVERLOAD("sf.Vector2f", "new", "fun(): sf.Vector2f");
+  LUASF_STUB_OVERLOAD("sf.Vector2f", "new",
+                      "fun(r: number, phi: sf.Angle): sf.Vector2f");
   LUASF_STUB_FUNCTION("sf.Vector2f", "unpack",
                       "fun(self: sf.Vector2f): number, number");
   LUASF_STUB_FUNCTION("sf.Vector2f", "lengthSquared",
@@ -72,6 +76,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("y", "integer");
   LUASF_STUB_FUNCTION("sf.Vector2u", "new",
                       "fun(x: integer, y: integer): sf.Vector2u");
+  LUASF_STUB_OVERLOAD("sf.Vector2u", "new", "fun(): sf.Vector2u");
   LUASF_STUB_FUNCTION("sf.Vector2u", "unpack",
                       "fun(self: sf.Vector2u): integer, integer");
   LUASF_STUB_OPERATOR("sf.Vector2u", "add(sf.Vector2u): sf.Vector2u");
@@ -86,6 +91,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("y", "boolean");
   LUASF_STUB_FUNCTION("sf.Vector2b", "new",
                       "fun(x: boolean, y: boolean): sf.Vector2b");
+  LUASF_STUB_OVERLOAD("sf.Vector2b", "new", "fun(): sf.Vector2b");
   LUASF_STUB_FUNCTION("sf.Vector2b", "unpack",
                       "fun(self: sf.Vector2b): boolean, boolean");
   LUASF_STUB_OPERATOR("sf.Vector2b", "eq(sf.Vector2b): boolean");
@@ -96,6 +102,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("z", "integer");
   LUASF_STUB_FUNCTION("sf.Vector3i", "new",
                       "fun(x: integer, y: integer, z: integer): sf.Vector3i");
+  LUASF_STUB_OVERLOAD("sf.Vector3i", "new", "fun(): sf.Vector3i");
   LUASF_STUB_FUNCTION("sf.Vector3i", "unpack",
                       "fun(self: sf.Vector3i): integer, integer, integer");
   LUASF_STUB_OPERATOR("sf.Vector3i", "add(sf.Vector3i): sf.Vector3i");
@@ -111,6 +118,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("z", "number");
   LUASF_STUB_FUNCTION("sf.Vector3f", "new",
                       "fun(x: number, y: number, z: number): sf.Vector3f");
+  LUASF_STUB_OVERLOAD("sf.Vector3f", "new", "fun(): sf.Vector3f");
   LUASF_STUB_FUNCTION("sf.Vector3f", "unpack",
                       "fun(self: sf.Vector3f): number, number, number");
   LUASF_STUB_FUNCTION("sf.Vector3f", "length",
@@ -130,6 +138,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("z", "integer");
   LUASF_STUB_FUNCTION("sf.Vector3u", "new",
                       "fun(x: integer, y: integer, z: integer): sf.Vector3u");
+  LUASF_STUB_OVERLOAD("sf.Vector3u", "new", "fun(): sf.Vector3u");
   LUASF_STUB_FUNCTION("sf.Vector3u", "unpack",
                       "fun(self: sf.Vector3u): integer, integer, integer");
   LUASF_STUB_OPERATOR("sf.Vector3u", "add(sf.Vector3u): sf.Vector3u");
@@ -145,6 +154,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FIELD("z", "boolean");
   LUASF_STUB_FUNCTION("sf.Vector3b", "new",
                       "fun(x: boolean, y: boolean, z: boolean): sf.Vector3b");
+  LUASF_STUB_OVERLOAD("sf.Vector3b", "new", "fun(): sf.Vector3b");
   LUASF_STUB_FUNCTION("sf.Vector3b", "unpack",
                       "fun(self: sf.Vector3b): boolean, boolean, boolean");
   LUASF_STUB_OPERATOR("sf.Vector3b", "eq(sf.Vector3b): boolean");
@@ -157,6 +167,9 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FUNCTION(
       "sf.Vector4i", "new",
       "fun(x: integer, y: integer, z: integer, w: integer): sf.Vector4i");
+  LUASF_STUB_OVERLOAD("sf.Vector4i", "new", "fun(): sf.Vector4i");
+  LUASF_STUB_OVERLOAD("sf.Vector4i", "new",
+                      "fun(color: sf.Color): sf.Vector4i");
 
   LUASF_STUB_CLASS("sf.Vector4f");
   LUASF_STUB_FIELD("x", "number");
@@ -166,6 +179,9 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FUNCTION(
       "sf.Vector4f", "new",
       "fun(x: number, y: number, z: number, w: number): sf.Vector4f");
+  LUASF_STUB_OVERLOAD("sf.Vector4f", "new", "fun(): sf.Vector4f");
+  LUASF_STUB_OVERLOAD("sf.Vector4f", "new",
+                      "fun(color: sf.Color): sf.Vector4f");
 
   LUASF_STUB_CLASS("sf.Vector4b");
   LUASF_STUB_FIELD("x", "boolean");
@@ -175,6 +191,7 @@ void bind_Vector(sol::state_view lua) {
   LUASF_STUB_FUNCTION(
       "sf.Vector4b", "new",
       "fun(x: boolean, y: boolean, z: boolean, w: boolean): sf.Vector4b");
+  LUASF_STUB_OVERLOAD("sf.Vector4b", "new", "fun(): sf.Vector4b");
 
   lua_sf::bind_Vector2T<int>(sf, "Vector2i");
   lua_sf::bind_Vector2T<float>(sf, "Vector2f");

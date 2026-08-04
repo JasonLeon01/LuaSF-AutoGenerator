@@ -43,7 +43,7 @@ if not exist "%EMBEDDED_LIB_DIR%" set "EMBEDDED_LIB_DIR=%LIB_DIR%"
 set "LUAC_FILE=%BUILD_DIR%\tools\%CONFIG%\luac.exe"
 if not exist "%LUAC_FILE%" set "LUAC_FILE=%BUILD_DIR%\tools\luac.exe"
 
-set "STUB_FILE=%BUILD_DIR%\LuaSF.lua"
+set "STUB_FILE=%BUILD_DIR%\LuaSF.d.lua"
 
 if not exist "%EMBEDDED_BIN_DIR%\LuaSF.dll" (
     echo Missing embedded LuaSF.dll under "%EMBEDDED_BIN_DIR%".
@@ -257,8 +257,8 @@ echo Done.
 echo Result folder: %RESULT_DIR%
 echo Embedded DLLs: %EMBEDDED_RESULT_DIR%\bin
 echo Lua extension DLLs: %EXTENSION_RESULT_DIR%\bin
-echo Embedded stub: %EMBEDDED_RESULT_DIR%\stub\LuaSF.lua
-echo Extension stub: %EXTENSION_RESULT_DIR%\stub\LuaSF.lua
+echo Embedded stub: %EMBEDDED_RESULT_DIR%\stub\LuaSF.d.lua
+echo Extension stub: %EXTENSION_RESULT_DIR%\stub\LuaSF.d.lua
 echo Headers: %EMBEDDED_RESULT_DIR%\include
 echo Host luac: %EMBEDDED_RESULT_DIR%\tools\luac.exe
 

@@ -58,7 +58,7 @@ if [ ! -d "$EMBEDDED_LIB_DIR" ]; then
     EMBEDDED_LIB_DIR="$LIB_DIR"
 fi
 
-STUB_FILE="$BUILD_DIR/LuaSF.lua"
+STUB_FILE="$BUILD_DIR/LuaSF.d.lua"
 LUAC_FILE=$(find "$BUILD_DIR/tools" -maxdepth 2 \( -type f -o -type l \) \( -name 'luac' -o -name 'luac.exe' \) 2>/dev/null | head -n 1 || true)
 
 find_embedded_module_file() {
@@ -284,7 +284,7 @@ echo "Done."
 echo "Result folder: $RESULT_DIR"
 echo "Embedded runtime libraries: $EMBEDDED_RESULT_DIR/bin"
 echo "Lua extension libraries: $EXTENSION_RESULT_DIR/bin"
-echo "Embedded stub: $EMBEDDED_RESULT_DIR/stub/LuaSF.lua"
-echo "Extension stub: $EXTENSION_RESULT_DIR/stub/LuaSF.lua"
+echo "Embedded stub: $EMBEDDED_RESULT_DIR/stub/LuaSF.d.lua"
+echo "Extension stub: $EXTENSION_RESULT_DIR/stub/LuaSF.d.lua"
 echo "Headers: $EMBEDDED_RESULT_DIR/include"
 echo "Host luac: $EMBEDDED_RESULT_DIR/tools/$(basename "$LUAC_FILE")"

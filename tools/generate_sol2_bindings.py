@@ -668,6 +668,13 @@ def cpp_type_to_lua_type(value: str) -> str:
     if opt_elem:
         return f"{cpp_type_to_lua_type(opt_elem)}|nil"
 
+    if is_template(base, "sf::priv::Matrix"):
+        dimensions = split_template_args(base)
+        if dimensions == ["3", "3"]:
+            return "sf.Mat3"
+        if dimensions == ["4", "4"]:
+            return "sf.Mat4"
+
     for template_name in ("sf::Vector2", "sf::Vector3", "sf::priv::Vector4", "sf::Glsl::Vector4", "sf::Rect"):
         if is_template(base, template_name):
             mapped = vector_template_lua_type(template_name, split_template_args(base)[0])
@@ -942,7 +949,10 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
         plan.lua_params.append(f"{lua_type} {name}")
         plan.prelude.extend(prelude)
         plan.call_args.append(expr)
-        if is_std_function(type_ref):
+        canonical_stub_type = cpp_type_to_lua_type(type_ref.canonical_cpp)
+        if canonical_stub_type != "any":
+            plan.stub_param_types[sanitize_lua_identifier(name)] = canonical_stub_type
+        elif is_std_function(type_ref):
             plan.stub_param_types[sanitize_lua_identifier(name)] = std_function_lua_type(type_ref)
         plan.signature_key += (lua_type,)
 
@@ -1448,10 +1458,12 @@ class Sol2Generator:
             *stub_doc_lines(enum_item),
             f'    LUASF_STUB_CLASS({cpp_string_literal(lua_path)});',
         ]
+        field_type = lua_path if enum_item.get("scoped") else "integer"
         for constant in constants:
             lines.extend(stub_doc_lines(constant))
             lines.append(
-                f'    LUASF_STUB_FIELD({cpp_string_literal(constant["name"])}, "integer");'
+                f"    LUASF_STUB_FIELD({cpp_string_literal(constant['name'])}, "
+                f"{cpp_string_literal(field_type)});"
             )
         lines.append(f'    {table_var}.new_enum("{lua_name}",')
         for index, constant in enumerate(constants):

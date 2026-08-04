@@ -79,6 +79,6 @@ echo Done.
 echo Project: %~dp0output
 echo Embedded DLL: %EMBEDDED_DLL%
 echo Lua extension: %EXTENSION_DLL%
-echo Stub: %~dp0output\build\LuaSF.lua
+echo Stub: %~dp0output\build\LuaSF.d.lua
 
 endlocal
