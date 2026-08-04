@@ -26,7 +26,7 @@ else()
     set(LUASF_EXTENSION_LIBRARY_TYPE MODULE)
 endif()
 if(NOT DEFINED LUASF_LUA_STUB_OUTPUT)
-    set(LUASF_LUA_STUB_OUTPUT "${{LUASF_BINARY_ROOT}}/{module_name}.lua")
+    set(LUASF_LUA_STUB_OUTPUT "${{LUASF_BINARY_ROOT}}/{module_name}.d.lua")
 endif()
 set(LUASF_LUA_STUB_OUTPUT "${{LUASF_LUA_STUB_OUTPUT}}" CACHE FILEPATH "LuaSF Lua stub output path")
 

@@ -19,8 +19,10 @@ Available CMake items:
 
 - `LuaSF::LuaSF`: imported LuaSF dynamic-library target, with include directories attached.
 - `LuaSF::Lua`: imported Lua dynamic-library target.
-- `LUASF_STUB_FILE`: absolute path to `stub/LuaSF.lua`.
+- `LUASF_STUB_FILE`: absolute path to `stub/LuaSF.d.lua`.
 - `LUASF_RUNTIME_FILES`: all files that should be next to the executable at runtime.
 - `LUASF_RUNTIME_DLLS`: compatibility alias for `LUASF_RUNTIME_FILES`.
 - `luasf_copy_runtime_files(target)`: post-build copy helper for LuaSF, Lua, SFML, and Windows bundled MSVC redistributable runtime libraries when present.
 - `luasf_copy_runtime_dlls(target)`: compatibility alias for Windows-oriented callers.
+
+`LuaSF.d.lua` is a global declaration file starting with `---@meta`, so EmmyLua can expose its `sf` API from a dedicated stub library directory.

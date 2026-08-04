@@ -128,7 +128,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(SFLua LANGUAGES C CXX)
 
-set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/LuaSF.lua")
+set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/stub/LuaSF.d.lua")
 
 add_subdirectory(LuaSF)
 
@@ -234,11 +234,13 @@ The collected package exposes these CMake items:
 
 - `LuaSF::LuaSF`: imported LuaSF dynamic-library target.
 - `LuaSF::Lua`: imported bundled Lua dynamic-library target.
-- `LUASF_STUB_FILE`: absolute path to `stub/LuaSF.lua`.
+- `LUASF_STUB_FILE`: absolute path to `stub/LuaSF.d.lua`.
 - `LUASF_RUNTIME_FILES`: bundled runtime files that should be placed next to the executable.
 - `LUASF_RUNTIME_DLLS`: compatibility alias for `LUASF_RUNTIME_FILES`.
 - `luasf_copy_runtime_files(target)`: post-build copy helper for all bundled runtime files.
 - `luasf_copy_runtime_dlls(target)`: compatibility alias for `luasf_copy_runtime_files(target)`.
+
+The generated `.d.lua` is a global declaration file and starts with `---@meta`, allowing EmmyLua to expose the `sf` API from a dedicated stub library directory.
 
 ## Runtime Notes
 

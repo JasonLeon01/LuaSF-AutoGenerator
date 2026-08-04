@@ -1,11 +1,12 @@
 #pragma once
 
+#include <array>
 #include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
-
 
 namespace lua_sf::stub {
 
@@ -37,6 +38,17 @@ struct PendingFunction {
   std::vector<std::string> overloads;
 };
 
+struct FunctionParameter {
+  std::string name;
+  std::string type;
+};
+
+struct FunctionType {
+  std::vector<FunctionParameter> parameters;
+  std::vector<std::string> returns;
+  bool valid = false;
+};
+
 inline PendingFunction &pending_function() {
   static PendingFunction pf;
   return pf;
@@ -58,15 +70,63 @@ inline void declare_table(const std::string &name) {
 
 inline void close_pending_class();
 
+inline bool is_doc_command_char(char value) {
+  return (value >= 'A' && value <= 'Z') ||
+         (value >= 'a' && value <= 'z');
+}
+
+inline bool is_doc_path_prefix(char value) {
+  return is_doc_command_char(value) ||
+         (value >= '0' && value <= '9') || value == '_' || value == ':' ||
+         value == '/' || value == '\\';
+}
+
+inline bool is_doxygen_command(std::string_view value) {
+  static constexpr std::array<std::string_view, 21> commands = {
+      "a",          "b",       "brief",   "c",       "code",
+      "deprecated", "e",       "em",      "endcode", "ingroup",
+      "li",         "note",    "overload", "p",       "param",
+      "relates",    "return",  "see",     "throws",  "warning"};
+  for (const std::string_view command : commands) {
+    if (value == command)
+      return true;
+  }
+  return false;
+}
+
+inline std::string normalize_doc_line(const std::string &line) {
+  std::string result;
+  result.reserve(line.size());
+  for (std::size_t index = 0; index < line.size();) {
+    if (line[index] != '\\' ||
+        (index > 0 && is_doc_path_prefix(line[index - 1])) ||
+        index + 1 >= line.size() ||
+        !is_doc_command_char(line[index + 1])) {
+      result.push_back(line[index]);
+      ++index;
+      continue;
+    }
+    std::size_t end = index + 1;
+    while (end < line.size() && is_doc_command_char(line[end]))
+      ++end;
+    const std::string_view command(line.data() + index + 1, end - index - 1);
+    result.push_back(is_doxygen_command(command) ? '@' : '\\');
+    result.append(command);
+    index = end;
+  }
+  return result;
+}
+
 inline void write_doc(const std::string &text) {
   std::istringstream stream(text);
   std::string line;
   while (std::getline(stream, line)) {
     if (!line.empty() && line.back() == '\r')
       line.pop_back();
+    const std::string normalized = normalize_doc_line(line);
     output() << "---";
-    if (!line.empty())
-      output() << " " << line;
+    if (!normalized.empty())
+      output() << " " << normalized;
     output() << "\n";
   }
 }
@@ -81,6 +141,141 @@ inline void write_pending_doc() {
   write_doc(current);
 }
 
+inline std::string trim(const std::string &value) {
+  const auto first = value.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos)
+    return {};
+  const auto last = value.find_last_not_of(" \t\r\n");
+  return value.substr(first, last - first + 1);
+}
+
+inline std::vector<std::string> split_top_level(const std::string &value) {
+  std::vector<std::string> result;
+  std::size_t start = 0;
+  int parentheses = 0;
+  int brackets = 0;
+  int braces = 0;
+  int angles = 0;
+  char quote = '\0';
+  bool escaped = false;
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    const char current = value[index];
+    if (quote != '\0') {
+      if (escaped) {
+        escaped = false;
+      } else if (current == '\\') {
+        escaped = true;
+      } else if (current == quote) {
+        quote = '\0';
+      }
+      continue;
+    }
+    if (current == '\'' || current == '"') {
+      quote = current;
+    } else if (current == '(') {
+      ++parentheses;
+    } else if (current == ')') {
+      --parentheses;
+    } else if (current == '[') {
+      ++brackets;
+    } else if (current == ']') {
+      --brackets;
+    } else if (current == '{') {
+      ++braces;
+    } else if (current == '}') {
+      --braces;
+    } else if (current == '<') {
+      ++angles;
+    } else if (current == '>') {
+      --angles;
+    } else if (current == ',' && parentheses == 0 && brackets == 0 &&
+               braces == 0 && angles == 0) {
+      result.push_back(trim(value.substr(start, index - start)));
+      start = index + 1;
+    }
+  }
+  const std::string tail = trim(value.substr(start));
+  if (!tail.empty())
+    result.push_back(tail);
+  return result;
+}
+
+inline std::size_t find_top_level_colon(const std::string &value) {
+  int parentheses = 0;
+  int brackets = 0;
+  int braces = 0;
+  int angles = 0;
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    const char current = value[index];
+    if (current == '(')
+      ++parentheses;
+    else if (current == ')')
+      --parentheses;
+    else if (current == '[')
+      ++brackets;
+    else if (current == ']')
+      --brackets;
+    else if (current == '{')
+      ++braces;
+    else if (current == '}')
+      --braces;
+    else if (current == '<')
+      ++angles;
+    else if (current == '>')
+      --angles;
+    else if (current == ':' && parentheses == 0 && brackets == 0 &&
+             braces == 0 && angles == 0)
+      return index;
+  }
+  return std::string::npos;
+}
+
+inline FunctionType parse_function_type(const std::string &value) {
+  FunctionType result;
+  const std::string type = trim(value);
+  if (!type.starts_with("fun("))
+    return result;
+
+  int depth = 0;
+  std::size_t close = std::string::npos;
+  for (std::size_t index = 3; index < type.size(); ++index) {
+    if (type[index] == '(') {
+      ++depth;
+    } else if (type[index] == ')') {
+      --depth;
+      if (depth == 0) {
+        close = index;
+        break;
+      }
+    }
+  }
+  if (close == std::string::npos)
+    return result;
+
+  for (const std::string &parameter :
+       split_top_level(type.substr(4, close - 4))) {
+    const auto colon = find_top_level_colon(parameter);
+    if (colon == std::string::npos)
+      return result;
+    std::string name = trim(parameter.substr(0, colon));
+    if (name.ends_with('?'))
+      name.pop_back();
+    const std::string parameter_type = trim(parameter.substr(colon + 1));
+    if (name.empty() || parameter_type.empty())
+      return result;
+    result.parameters.push_back({std::move(name), parameter_type});
+  }
+
+  std::string return_text = trim(type.substr(close + 1));
+  if (!return_text.empty()) {
+    if (!return_text.starts_with(':'))
+      return result;
+    result.returns = split_top_level(return_text.substr(1));
+  }
+  result.valid = true;
+  return result;
+}
+
 inline void flush_pending_function() {
   auto &pf = pending_function();
   if (!enabled() || pf.name.empty())
@@ -93,6 +288,31 @@ inline void flush_pending_function() {
   close_pending_class();
   declare_table(current.owner);
   write_doc(current.doc);
+  if (!current.overloads.empty()) {
+    const FunctionType function_type = parse_function_type(current.type);
+    if (function_type.valid) {
+      for (const auto &overload : current.overloads)
+        output() << "---@overload " << overload << "\n";
+      for (const auto &parameter : function_type.parameters) {
+        if (parameter.name == "...")
+          output() << "---@vararg " << parameter.type << "\n";
+        else
+          output() << "---@param " << parameter.name << " " << parameter.type
+                   << "\n";
+      }
+      for (const auto &return_type : function_type.returns)
+        output() << "---@return " << return_type << "\n";
+      output() << "function " << current.owner << "." << current.name << "(";
+      for (std::size_t index = 0; index < function_type.parameters.size();
+           ++index) {
+        if (index != 0)
+          output() << ", ";
+        output() << function_type.parameters[index].name;
+      }
+      output() << ") end\n";
+      return;
+    }
+  }
   output() << "---@type " << current.type << "\n";
   for (const auto &ol : current.overloads)
     output() << "---@overload " << ol << "\n";

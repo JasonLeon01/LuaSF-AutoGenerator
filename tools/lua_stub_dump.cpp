@@ -91,7 +91,7 @@ int main(int argc, char** argv)
 {
     if (argc != 4)
     {
-        std::cerr << "usage: lua_stub_dump <module-library> <write-stub-symbol> <output.lua>\n";
+        std::cerr << "usage: lua_stub_dump <module-library> <write-stub-symbol> <output.d.lua>\n";
         return 2;
     }
 

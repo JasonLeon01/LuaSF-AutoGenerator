@@ -83,4 +83,4 @@ if [ -n "$EXTENSION_MODULE_FILE" ]; then
 else
     echo "Lua extension: output/build/bin/$BUILD_CONFIG/extension"
 fi
-echo "Stub: $SCRIPT_DIR/output/build/LuaSF.lua"
+echo "Stub: $SCRIPT_DIR/output/build/LuaSF.d.lua"
