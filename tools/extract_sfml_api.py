@@ -34,8 +34,6 @@ EXCLUDED_HEADERS = {
     "Graphics": {
         "Drawable.hpp",
         "Export.hpp",
-        "Glsl.hpp",
-        "Rect.hpp",
     },
     "Network": {
         "Export.hpp",
@@ -49,8 +47,6 @@ EXCLUDED_HEADERS = {
         "String.hpp",
         "SuspendAwareClock.hpp",
         "Utf.hpp",
-        "Vector2.hpp",
-        "Vector3.hpp",
     },
     "Window": {
         "Event.hpp",
@@ -58,6 +54,14 @@ EXCLUDED_HEADERS = {
         "GlResource.hpp",
         "Vulkan.hpp",
     },
+}
+
+# Some public aliases are declared in a regular header while the template
+# definitions they expose live in an included implementation file.  Associate
+# those declarations with the public header so downstream generators still
+# produce a single binding unit for the public surface.
+DECLARATION_COMPANIONS = {
+    "SFML/Graphics/Glsl.hpp": ("SFML/Graphics/Glsl.inl",),
 }
 
 DECL_KINDS = {
@@ -238,7 +242,14 @@ def default_value(param: cindex.Cursor) -> str | None:
 
 def parameters(cursor: cindex.Cursor) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for index, arg in enumerate(cursor.get_arguments() or []):
+    arguments = list(cursor.get_arguments() or [])
+    if not arguments and cursor.kind == cindex.CursorKind.FUNCTION_TEMPLATE:
+        arguments = [
+            child
+            for child in cursor.get_children()
+            if child.kind == cindex.CursorKind.PARM_DECL
+        ]
+    for index, arg in enumerate(arguments):
         result.append(
             {
                 "name": arg.spelling or f"arg{index}",
@@ -356,6 +367,22 @@ def node_to_dict(
         if hasattr(cursor, "is_abstract_record"):
             item["abstract"] = cursor.is_abstract_record()
 
+    if cursor.kind in {cindex.CursorKind.CLASS_TEMPLATE, cindex.CursorKind.FUNCTION_TEMPLATE}:
+        template_parameters: list[dict[str, Any]] = []
+        for child in cursor.get_children():
+            if child.kind == cindex.CursorKind.TEMPLATE_TYPE_PARAMETER:
+                template_parameters.append({"name": child.spelling, "kind": "type"})
+            elif child.kind == cindex.CursorKind.TEMPLATE_NON_TYPE_PARAMETER:
+                template_parameters.append(
+                    {
+                        "name": child.spelling,
+                        "kind": "non_type",
+                        "type": type_info(child.type),
+                    }
+                )
+        if template_parameters:
+            item["template_parameters"] = template_parameters
+
     if cursor.kind == cindex.CursorKind.FIELD_DECL:
         item["type"] = type_info(cursor.type)
         try:
@@ -442,6 +469,16 @@ def parse_umbrella(
         f'#include "{header.relative_to(include_dir).as_posix()}"' for header in headers
     )
     header_set = {header.resolve() for header in headers}
+    declaration_owners: dict[Path, Path] = {header: header for header in header_set}
+    for header in headers:
+        public_key = header.relative_to(include_dir).as_posix()
+        for companion_name in DECLARATION_COMPANIONS.get(public_key, ()):
+            companion = (include_dir / companion_name).resolve()
+            if not companion.is_file():
+                raise FileNotFoundError(
+                    f"missing declaration companion for {public_key}: {companion}"
+                )
+            declaration_owners[companion] = header.resolve()
 
     tu = index.parse(
         umbrella_name,
@@ -455,14 +492,15 @@ def parse_umbrella(
     declarations_by_file: dict[Path, list[dict[str, Any]]] = {header.resolve(): [] for header in headers}
     for child in tu.cursor.get_children():
         source = cursor_file(child)
-        if source not in header_set:
+        owner = declaration_owners.get(source)
+        if owner is None:
             continue
         parsed = node_to_dict(child, source, include_non_public)
         if parsed is not None:
             if isinstance(parsed, list):
-                declarations_by_file[source].extend(parsed)
+                declarations_by_file[owner].extend(parsed)
             else:
-                declarations_by_file[source].append(parsed)
+                declarations_by_file[owner].append(parsed)
     return declarations_by_file, diagnostics
 
 
