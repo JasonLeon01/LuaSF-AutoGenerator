@@ -1551,9 +1551,9 @@ class Sol2Generator:
                 if item.get("kind") != "FUNCTION_TEMPLATE" or not item.get("name", "").startswith("operator"):
                     continue
                 params = item.get("parameters", [])
-                canonical_types = [TypeRef.from_json(param.get("type")).canonical_cpp for param in params]
+                semantic_types = [TypeRef.from_json(param.get("type")).cpp for param in params]
                 for template_name in TEMPLATE_PROFILES:
-                    if any(template_name + "<" in type_text for type_text in canonical_types):
+                    if any(template_name + "<" in type_text for type_text in semantic_types):
                         operators.add((template_name, item.get("name", ""), len(params)))
         return operators
 
