@@ -148,6 +148,43 @@ class TypeRef:
         return clean_cpp_type(self.spelling or self.canonical)
 
 
+@dataclass(frozen=True)
+class ConfiguredBinding:
+    """One declarative extension rendered for a template specialization."""
+
+    kind: str
+    template: str
+    name: str = ""
+    stub_signature: str = ""
+    values: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class TemplateProfile:
+    """Binding policy shared by every specialization of a C++ template."""
+
+    cpp_template: str
+    value_type: bool = True
+    allowed_operators: tuple[str, ...] = ()
+    configured_bindings: tuple[ConfiguredBinding, ...] = ()
+    replaced_fields: tuple[str, ...] = ()
+    field_lua_types: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class TemplateSpecializationOverride:
+    """Exceptions that cannot be inferred from a public C++ alias alone."""
+
+    cpp_type: str
+    lua_path: str = ""
+    disabled_members: tuple[str, ...] = ()
+    disabled_constructors: tuple[str, ...] = ()
+    allowed_operators: tuple[str, ...] | None = None
+    configured_bindings: tuple[ConfiguredBinding, ...] = ()
+    aliases: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
+
+
 # --- Lua name helpers ---
 
 
@@ -572,10 +609,7 @@ _register_packet_io(PacketIoType(
 # ===========================================================================
 
 MANUAL_DEPENDENCIES: dict[str, set[str]] = {
-    "bind_Vector": {"bind_Angle", "bind_Color"},
-    "bind_Rect": {"bind_Vector"},
-    "bind_Matrix": {"bind_Transform"},
-    "bind_Event": {"bind_Vector", "bind_Joystick", "bind_Keyboard", "bind_Mouse", "bind_Sensor"},
+    "bind_Event": {"bind_Vector2", "bind_Joystick", "bind_Keyboard", "bind_Mouse", "bind_Sensor"},
     "bind_Handle": set(),
     "bind_Drawable": set(),
     "bind_ClassSupport": {"bind_Sprite"},
@@ -584,17 +618,172 @@ MANUAL_DEPENDENCIES: dict[str, set[str]] = {
 MANUAL_HEADER_OWNERS: dict[str, str] = {
     "Drawable": "bind_Drawable",
     "Event": "bind_Event",
-    "Rect": "bind_Rect",
-    "Vector2": "bind_Vector",
-    "Vector3": "bind_Vector",
     "WindowHandle": "bind_Handle",
 }
 
-MANUAL_HEADER_DECLARATION_PREFIX_OWNERS: dict[str, dict[str, str]] = {
-    "Glsl": {
-        "Vector": "bind_Vector",
-        "Matrix": "bind_Matrix",
-    },
+MANUAL_HEADER_DECLARATION_PREFIX_OWNERS: dict[str, dict[str, str]] = {}
+
+
+# ===========================================================================
+# 3a. Template Specialization Bindings
+# ===========================================================================
+
+LUA_NAMESPACE_PROJECTIONS: dict[str, str] = {
+    "sf::Glsl": "sf",
+}
+
+_VECTOR_OPERATORS = (
+    "operator-:unary",
+    "operator+:binary",
+    "operator-:binary",
+    "operator*:binary",
+    "operator/:binary",
+    "operator==:binary",
+)
+
+_VECTOR_FLOAT_ONLY = (
+    "length",
+    "normalized",
+    "angleTo",
+    "angle",
+    "rotatedBy",
+    "projectedOnto",
+)
+
+TEMPLATE_PROFILES: dict[str, TemplateProfile] = {
+    "sf::Vector2": TemplateProfile(
+        cpp_template="sf::Vector2",
+        allowed_operators=_VECTOR_OPERATORS,
+        configured_bindings=(
+            ConfiguredBinding("member", "template_unpack", name="unpack", values=(("fields", "x,y"),)),
+            ConfiguredBinding("member", "template_components_tostring", values=(("fields", "x,y"),)),
+        ),
+    ),
+    "sf::Vector3": TemplateProfile(
+        cpp_template="sf::Vector3",
+        allowed_operators=_VECTOR_OPERATORS,
+        configured_bindings=(
+            ConfiguredBinding("member", "template_unpack", name="unpack", values=(("fields", "x,y,z"),)),
+            ConfiguredBinding("member", "template_components_tostring", values=(("fields", "x,y,z"),)),
+        ),
+    ),
+    "sf::priv::Vector4": TemplateProfile(
+        cpp_template="sf::priv::Vector4",
+        configured_bindings=(
+            ConfiguredBinding("member", "template_unpack", name="unpack", values=(("fields", "x,y,z,w"),)),
+            ConfiguredBinding("member", "template_components_tostring", values=(("fields", "x,y,z,w"),)),
+        ),
+    ),
+    "sf::Rect": TemplateProfile(
+        cpp_template="sf::Rect",
+        allowed_operators=("operator==:binary",),
+        configured_bindings=(ConfiguredBinding("member", "template_rect_tostring"),),
+    ),
+    "sf::priv::Matrix": TemplateProfile(
+        cpp_template="sf::priv::Matrix",
+        configured_bindings=(
+            ConfiguredBinding("member", "template_matrix_array_field"),
+            ConfiguredBinding("member", "template_matrix_copy"),
+            ConfiguredBinding("member", "template_matrix_tostring"),
+        ),
+        replaced_fields=("array",),
+        field_lua_types=(("array", "number[]"),),
+    ),
+    "sf::Music::Span": TemplateProfile(cpp_template="sf::Music::Span"),
+}
+
+
+def _rect_scalar_constructor(scalar_param: str, scalar_expr_suffix: str, scalar_lua: str) -> ConfiguredBinding:
+    return ConfiguredBinding(
+        "constructor",
+        "template_rect_scalar_constructor",
+        stub_signature=(
+            f"fun(x: {scalar_lua}, y: {scalar_lua}, width: {scalar_lua}, "
+            f"height: {scalar_lua}): {{lua_path}}"
+        ),
+        values=(("scalar_param", scalar_param), ("scalar_expr_suffix", scalar_expr_suffix)),
+    )
+
+
+def _matrix_array_constructor(element_count: int) -> ConfiguredBinding:
+    return ConfiguredBinding(
+        "constructor",
+        "template_matrix_array_constructor",
+        stub_signature="fun(values: number[]): {lua_path}",
+        values=(("element_count", str(element_count)),),
+    )
+
+
+TEMPLATE_SPECIALIZATION_OVERRIDES: dict[str, TemplateSpecializationOverride] = {
+    "sf::Vector2<int>": TemplateSpecializationOverride(
+        cpp_type="sf::Vector2<int>",
+        disabled_members=_VECTOR_FLOAT_ONLY,
+        disabled_constructors=("r,phi",),
+    ),
+    "sf::Vector2<unsigned int>": TemplateSpecializationOverride(
+        cpp_type="sf::Vector2<unsigned int>",
+        disabled_members=_VECTOR_FLOAT_ONLY,
+        disabled_constructors=("r,phi",),
+    ),
+    "sf::Vector2<bool>": TemplateSpecializationOverride(
+        cpp_type="sf::Vector2<bool>",
+        lua_path="sf.Vector2b",
+        disabled_members=(
+            "length", "lengthSquared", "normalized", "angleTo", "angle",
+            "rotatedBy", "projectedOnto", "perpendicular", "dot", "cross",
+            "componentWiseMul", "componentWiseDiv",
+        ),
+        disabled_constructors=("r,phi",),
+        allowed_operators=("operator==:binary",),
+    ),
+    "sf::Vector3<int>": TemplateSpecializationOverride(
+        cpp_type="sf::Vector3<int>", disabled_members=("length", "normalized")
+    ),
+    "sf::Vector3<unsigned int>": TemplateSpecializationOverride(
+        cpp_type="sf::Vector3<unsigned int>", disabled_members=("length", "normalized")
+    ),
+    "sf::Vector3<bool>": TemplateSpecializationOverride(
+        cpp_type="sf::Vector3<bool>",
+        lua_path="sf.Vector3b",
+        disabled_members=(
+            "length", "lengthSquared", "normalized", "dot", "cross",
+            "componentWiseMul", "componentWiseDiv",
+        ),
+        allowed_operators=("operator==:binary",),
+    ),
+    "sf::priv::Vector4<int>": TemplateSpecializationOverride(
+        cpp_type="sf::priv::Vector4<int>", lua_path="sf.Vector4i", dependencies=("sf::Color",)
+    ),
+    "sf::priv::Vector4<float>": TemplateSpecializationOverride(
+        cpp_type="sf::priv::Vector4<float>", lua_path="sf.Vector4f", dependencies=("sf::Color",)
+    ),
+    "sf::priv::Vector4<bool>": TemplateSpecializationOverride(
+        cpp_type="sf::priv::Vector4<bool>",
+        lua_path="sf.Vector4b",
+        disabled_constructors=("color",),
+    ),
+    "sf::Rect<int>": TemplateSpecializationOverride(
+        cpp_type="sf::Rect<int>",
+        configured_bindings=(_rect_scalar_constructor("lua_sf::LuaIntegral<int>", ".value()", "integer"),),
+    ),
+    "sf::Rect<float>": TemplateSpecializationOverride(
+        cpp_type="sf::Rect<float>",
+        configured_bindings=(_rect_scalar_constructor("float", "", "number"),),
+    ),
+    "sf::priv::Matrix<3, 3>": TemplateSpecializationOverride(
+        cpp_type="sf::priv::Matrix<3, 3>",
+        lua_path="sf.Mat3",
+        disabled_constructors=("pointer",),
+        configured_bindings=(_matrix_array_constructor(9),),
+        dependencies=("sf::Transform",),
+    ),
+    "sf::priv::Matrix<4, 4>": TemplateSpecializationOverride(
+        cpp_type="sf::priv::Matrix<4, 4>",
+        lua_path="sf.Mat4",
+        disabled_constructors=("pointer",),
+        configured_bindings=(_matrix_array_constructor(16),),
+        dependencies=("sf::Transform",),
+    ),
 }
 
 
@@ -751,6 +940,80 @@ _t("ll_reset_nonvoid",
 _t("shader_uniform_array",
     "auto {param}_buffer = lua_sf::array_from_object<{cpp_type}>({param});",
     "self.setUniformArray(name, {param}_buffer.data(), static_cast<std::size_t>({param}_buffer.size()));",
+)
+
+_t("template_unpack",
+    'LUASF_STUB_FUNCTION("{lua_path}", "unpack", "fun(self: {lua_path}): {field_lua_returns}");',
+    '{var_name}.set_function("unpack", [](const {cpp_type}& self) {{',
+    '    return std::make_tuple({field_exprs});',
+    '}});',
+)
+
+_t("template_components_tostring",
+    '{var_name}[sol::meta_function::to_string] = [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
+    '    std::ostringstream stream;',
+    '    stream << name << "(" << {stream_components} << ")";',
+    '    return stream.str();',
+    '}};',
+)
+
+_t("template_rect_tostring",
+    '{var_name}[sol::meta_function::to_string] = [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
+    '    std::ostringstream stream;',
+    '    stream << name << "(" << self.position.x << ", " << self.position.y << ", "',
+    '           << self.size.x << ", " << self.size.y << ")";',
+    '    return stream.str();',
+    '}};',
+)
+
+_t("template_rect_scalar_constructor",
+    '[]({scalar_param} x, {scalar_param} y, {scalar_param} width, {scalar_param} height) {{',
+    '    return {cpp_type}{{{{x{scalar_expr_suffix}, y{scalar_expr_suffix}}},',
+    '                       {{width{scalar_expr_suffix}, height{scalar_expr_suffix}}}}};',
+    '}}',
+)
+
+_t("template_matrix_array_constructor",
+    '[](sol::table values) {{',
+    '    auto buffer = lua_sf::array_from_object<float>(values);',
+    '    if (buffer.size() != {element_count})',
+    '        throw std::runtime_error("matrix constructor expects exactly {element_count} float values");',
+    '    return {cpp_type}{{buffer.data()}};',
+    '}}',
+)
+
+_t("template_matrix_array_field",
+    '{var_name}.set("array", sol::property(',
+    '    [](const {cpp_type}& self) {{',
+    '        return sol::as_table(std::vector<float>(self.array.begin(), self.array.end()));',
+    '    }},',
+    '    []({cpp_type}& self, sol::object values) {{',
+    '        auto buffer = lua_sf::array_from_object<float>(values);',
+    '        if (buffer.size() != self.array.size())',
+    '            throw std::runtime_error("matrix array assignment has the wrong number of float values");',
+    '        std::copy(buffer.begin(), buffer.end(), self.array.begin());',
+    '    }}));',
+)
+
+_t("template_matrix_copy",
+    'LUASF_STUB_FUNCTION("{lua_path}", "copyMatrix", "fun(source: sf.Transform, dest: {lua_path})");',
+    '{var_name}.set_function("copyMatrix", [](const sf::Transform& source, {cpp_type}& dest) {{',
+    '    sf::priv::copyMatrix(source, dest);',
+    '}});',
+)
+
+_t("template_matrix_tostring",
+    '{var_name}[sol::meta_function::to_string] = [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
+    '    std::ostringstream stream;',
+    '    stream << name << "(";',
+    '    for (std::size_t index = 0; index < self.array.size(); ++index) {{',
+    '        if (index != 0)',
+    '            stream << ", ";',
+    '        stream << self.array[index];',
+    '    }}',
+    '    stream << ")";',
+    '    return stream.str();',
+    '}};',
 )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 from dataclasses import dataclass, field
@@ -11,13 +12,16 @@ try:
     from .replace_model import (
         AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
         AUDIO_EFFECT_PROCESSOR_SIGNATURE,
+        BINDING_TEMPLATES,
         BYTE_TYPES,
+        ConfiguredBinding,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
         LifecycleCategory,
+        LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
         NUMBER_TYPES,
         NUMERIC_ARRAY_TYPES,
@@ -30,6 +34,10 @@ try:
         SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
+        TEMPLATE_PROFILES,
+        TEMPLATE_SPECIALIZATION_OVERRIDES,
+        TemplateProfile,
+        TemplateSpecializationOverride,
         TYPE_DECL_KINDS,
         TypeRef,
         clean_cpp_type,
@@ -53,13 +61,16 @@ except ImportError:
     from replace_model import (
         AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
         AUDIO_EFFECT_PROCESSOR_SIGNATURE,
+        BINDING_TEMPLATES,
         BYTE_TYPES,
+        ConfiguredBinding,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
         LifecycleCategory,
+        LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
         NUMBER_TYPES,
         NUMERIC_ARRAY_TYPES,
@@ -72,6 +83,10 @@ except ImportError:
         SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
+        TEMPLATE_PROFILES,
+        TEMPLATE_SPECIALIZATION_OVERRIDES,
+        TemplateProfile,
+        TemplateSpecializationOverride,
         TYPE_DECL_KINDS,
         TypeRef,
         clean_cpp_type,
@@ -121,6 +136,22 @@ class PlannedCall:
     stub_param_types: dict[str, str] = field(default_factory=dict)
     signature_key: tuple[str, ...] = field(default_factory=tuple)
     unsupported: str | None = None
+
+
+@dataclass
+class TemplateSpecialization:
+    cpp_type: str
+    template_name: str
+    args: tuple[str, ...]
+    template_decl: dict[str, Any]
+    profile: TemplateProfile
+    override: TemplateSpecializationOverride | None
+    lua_path: str
+    primary_alias: str
+    alias_paths: dict[str, str]
+
+
+SPECIALIZATION_LUA_TYPES: dict[str, str] = {}
 
 
 def sfml_include_for_file(file_item: dict[str, Any]) -> str:
@@ -576,6 +607,9 @@ def lua_name_for_type(qualified_name: str) -> str:
 
 def lua_path_for_type(qualified_name: str) -> str:
     qualified_name = clean_cpp_type(qualified_name)
+    configured = SPECIALIZATION_LUA_TYPES.get(remove_cvref(qualified_name))
+    if configured:
+        return configured
     if qualified_name.startswith("sf::"):
         qualified_name = qualified_name[len("sf::") :]
         return "sf." + qualified_name.replace("::", ".")
@@ -597,36 +631,6 @@ def sanitize_lua_identifier(value: str) -> str:
     if value in LUA_KEYWORDS:
         return f"{value}_"
     return value
-
-
-def vector_template_lua_type(template_name: str, elem: str) -> str | None:
-    elem = clean_cpp_type(elem)
-    if template_name == "sf::Vector2":
-        return {
-            "int": "sf.Vector2i",
-            "float": "sf.Vector2f",
-            "unsigned int": "sf.Vector2u",
-            "bool": "sf.Vector2b",
-        }.get(elem)
-    if template_name == "sf::Vector3":
-        return {
-            "int": "sf.Vector3i",
-            "float": "sf.Vector3f",
-            "unsigned int": "sf.Vector3u",
-            "bool": "sf.Vector3b",
-        }.get(elem)
-    if template_name in {"sf::priv::Vector4", "sf::Glsl::Vector4"}:
-        return {
-            "int": "sf.Vector4i",
-            "float": "sf.Vector4f",
-            "bool": "sf.Vector4b",
-        }.get(elem)
-    if template_name == "sf::Rect":
-        return {
-            "int": "sf.IntRect",
-            "float": "sf.FloatRect",
-        }.get(elem)
-    return None
 
 
 def cpp_type_to_lua_type(value: str) -> str:
@@ -655,6 +659,8 @@ def cpp_type_to_lua_type(value: str) -> str:
         return "any"
     if base == "lua_sf::WindowHandle" or is_window_handle(TypeRef(spelling=base, canonical=base)):
         return "sf.WindowHandle"
+    if base in SPECIALIZATION_LUA_TYPES:
+        return SPECIALIZATION_LUA_TYPES[base]
 
     type_ref = TypeRef(spelling=value, canonical=value)
     if std_function_signature(type_ref):
@@ -667,19 +673,6 @@ def cpp_type_to_lua_type(value: str) -> str:
     opt_elem = optional_element(base)
     if opt_elem:
         return f"{cpp_type_to_lua_type(opt_elem)}|nil"
-
-    if is_template(base, "sf::priv::Matrix"):
-        dimensions = split_template_args(base)
-        if dimensions == ["3", "3"]:
-            return "sf.Mat3"
-        if dimensions == ["4", "4"]:
-            return "sf.Mat4"
-
-    for template_name in ("sf::Vector2", "sf::Vector3", "sf::priv::Vector4", "sf::Glsl::Vector4", "sf::Rect"):
-        if is_template(base, template_name):
-            mapped = vector_template_lua_type(template_name, split_template_args(base)[0])
-            if mapped:
-                return mapped
 
     if base.startswith("sf::"):
         return lua_path_for_type(base)
@@ -964,6 +957,7 @@ def make_lambda(
     owner_type: str | None,
     call_name: str,
     is_constructor: bool = False,
+    value_constructor: bool = False,
 ) -> tuple[str | None, str | None]:
     params = item.get("parameters", [])
     plan = plan_parameters(params, item.get("qualified_name") or call_name)
@@ -995,7 +989,10 @@ def make_lambda(
             return render_ll_stream_ctor(owner_clean, params), None
         lines.append(f"{capture}({lua_args}) {{")
         lines.extend(f"    {line}" for line in plan.prelude)
-        if is_memory_lifecycle:
+        if value_constructor:
+            arguments = ", ".join(plan.call_args)
+            lines.append(f"    return {owner_type}{{{arguments}}};")
+        elif is_memory_lifecycle:
             lines.append(
                 f"    return lua_sf::wrapLuaSharedObject("
                 f"lua_sf::makeLongLivedMemoryObject<{owner_type}>({', '.join(plan.call_args)}));"
@@ -1285,9 +1282,280 @@ class Sol2Generator:
         self.src_root = output_root / "src"
         self.skipped: list[str] = []
         set_public_type_aliases(api)
+        self.template_map = self._build_template_map()
+        self._validate_template_profiles()
+        self.specializations, self.alias_specializations = self._build_template_specializations()
+        self._validate_template_specializations()
+        self.free_template_operators = self._build_free_template_operators()
         self.class_map = self._build_class_map()
         self.type_includes = self._build_type_includes()
         self.sorted_type_includes = sorted(self.type_includes.items(), key=lambda item: len(item[0]), reverse=True)
+
+    @staticmethod
+    def _template_root(value: str) -> str:
+        value = remove_cvref(clean_cpp_type(value))
+        return value.split("<", 1)[0]
+
+    @staticmethod
+    def _project_alias_path(qualified_name: str) -> str:
+        qualified_name = clean_cpp_type(qualified_name)
+        for cpp_namespace, lua_namespace in LUA_NAMESPACE_PROJECTIONS.items():
+            prefix = cpp_namespace + "::"
+            if qualified_name.startswith(prefix):
+                suffix = qualified_name[len(prefix):].replace("::", ".")
+                return f"{lua_namespace}.{suffix}" if suffix else lua_namespace
+        if qualified_name.startswith("sf::"):
+            return "sf." + qualified_name[len("sf::"):].replace("::", ".")
+        return qualified_name.replace("::", ".")
+
+    def _build_template_map(self) -> dict[str, dict[str, Any]]:
+        templates: dict[str, dict[str, Any]] = {}
+        for file_item in self.api.get("files", []):
+            for item in walk_declarations(file_item.get("declarations", [])):
+                if item.get("kind") != "CLASS_TEMPLATE":
+                    continue
+                qualified_name = clean_cpp_type(item.get("qualified_name") or "")
+                if qualified_name:
+                    templates.setdefault(qualified_name, item)
+        return templates
+
+    def _validate_template_profiles(self) -> None:
+        for template_name, profile in TEMPLATE_PROFILES.items():
+            if clean_cpp_type(profile.cpp_template) != clean_cpp_type(template_name):
+                raise ValueError(
+                    f"template profile key {template_name!r} does not match cpp_template "
+                    f"{profile.cpp_template!r}"
+                )
+            if template_name not in self.template_map:
+                raise ValueError(f"configured template profile {template_name!r} was not extracted")
+            field_type_names = [name for name, _lua_type in profile.field_lua_types]
+            if len(field_type_names) != len(set(field_type_names)):
+                raise ValueError(f"template profile {template_name!r} configures a field Lua type more than once")
+            for binding in profile.configured_bindings:
+                self._validate_configured_binding(template_name, binding)
+
+        for configured_type, override in TEMPLATE_SPECIALIZATION_OVERRIDES.items():
+            if clean_cpp_type(override.cpp_type) != clean_cpp_type(configured_type):
+                raise ValueError(
+                    f"template specialization key {configured_type!r} does not match cpp_type "
+                    f"{override.cpp_type!r}"
+                )
+            template_name = self._template_root(configured_type)
+            if template_name not in TEMPLATE_PROFILES:
+                raise ValueError(
+                    f"template specialization override {configured_type!r} references unknown template "
+                    f"{template_name!r}"
+                )
+            for binding in override.configured_bindings:
+                self._validate_configured_binding(configured_type, binding)
+            if len(override.aliases) != len(set(override.aliases)):
+                raise ValueError(
+                    f"template specialization override {configured_type!r} repeats an additional Lua alias"
+                )
+
+    @staticmethod
+    def _validate_configured_binding(owner: str, binding: ConfiguredBinding) -> None:
+        if binding.kind not in {"constructor", "member"}:
+            raise ValueError(
+                f"configured binding {binding.template!r} for {owner} has invalid kind {binding.kind!r}"
+            )
+        if binding.template not in BINDING_TEMPLATES:
+            raise ValueError(
+                f"configured binding for {owner} references missing code template {binding.template!r}"
+            )
+        value_names = [name for name, _value in binding.values]
+        if len(value_names) != len(set(value_names)):
+            raise ValueError(
+                f"configured binding {binding.template!r} for {owner} repeats a template value"
+            )
+
+    def _build_template_specializations(
+        self,
+    ) -> tuple[dict[str, TemplateSpecialization], dict[str, TemplateSpecialization]]:
+        aliases_by_target: dict[str, list[dict[str, Any]]] = {}
+        for file_item in self.api.get("files", []):
+            for item in walk_declarations(file_item.get("declarations", [])):
+                if item.get("kind") not in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}:
+                    continue
+                qualified_name = clean_cpp_type(item.get("qualified_name") or "")
+                target = clean_cpp_type(TypeRef.from_json(item.get("type")).canonical_cpp)
+                if qualified_name and target.startswith("sf::") and "<" in target:
+                    aliases_by_target.setdefault(target, []).append(item)
+
+        specializations: dict[str, TemplateSpecialization] = {}
+        by_alias: dict[str, TemplateSpecialization] = {}
+        SPECIALIZATION_LUA_TYPES.clear()
+        for target, aliases in sorted(aliases_by_target.items()):
+            template_name = self._template_root(target)
+            template_decl = self.template_map.get(template_name)
+            profile = TEMPLATE_PROFILES.get(template_name)
+            if template_decl is None:
+                raise ValueError(
+                    f"public alias specializes unknown or unextracted template {template_name!r}: {target}"
+                )
+            if profile is None:
+                raise ValueError(
+                    f"public alias specializes unconfigured template {template_name!r}: {target}"
+                )
+            args = tuple(split_template_args(target))
+            parameters = template_decl.get("template_parameters", [])
+            if len(args) != len(parameters):
+                raise ValueError(
+                    f"template alias {target} has {len(args)} arguments, expected {len(parameters)} for {template_name}"
+                )
+
+            override = TEMPLATE_SPECIALIZATION_OVERRIDES.get(target)
+            projected = {
+                clean_cpp_type(item.get("qualified_name") or ""): self._project_alias_path(
+                    item.get("qualified_name") or ""
+                )
+                for item in aliases
+            }
+            ranked_aliases = sorted(projected, key=lambda name: (name.count("::"), name))
+            if not ranked_aliases:
+                raise ValueError(f"template specialization {target} has no public aliases")
+            shallowest_depth = ranked_aliases[0].count("::")
+            shallowest_paths = {
+                projected[name]
+                for name in ranked_aliases
+                if name.count("::") == shallowest_depth
+            }
+            if override and override.lua_path:
+                lua_path = override.lua_path
+            elif len(shallowest_paths) == 1:
+                lua_path = next(iter(shallowest_paths))
+            else:
+                raise ValueError(
+                    f"ambiguous Lua primary name for {target}: {sorted(shallowest_paths)}; add a specialization override"
+                )
+            matching_primary = [name for name in ranked_aliases if projected[name] == lua_path]
+            primary_alias = matching_primary[0] if matching_primary else ranked_aliases[0]
+            specialization = TemplateSpecialization(
+                cpp_type=target,
+                template_name=template_name,
+                args=args,
+                template_decl=template_decl,
+                profile=profile,
+                override=override,
+                lua_path=lua_path,
+                primary_alias=primary_alias,
+                alias_paths=projected,
+            )
+            specializations[target] = specialization
+            SPECIALIZATION_LUA_TYPES[target] = lua_path
+            for alias_name in ranked_aliases:
+                by_alias[alias_name] = specialization
+                SPECIALIZATION_LUA_TYPES[alias_name] = lua_path
+
+        missing_overrides = sorted(set(TEMPLATE_SPECIALIZATION_OVERRIDES) - set(specializations))
+        if missing_overrides:
+            raise ValueError(f"template specialization overrides have no extracted public alias: {missing_overrides}")
+        return specializations, by_alias
+
+    def _validate_template_specializations(self) -> None:
+        lua_name_owners: dict[str, str] = {}
+        public_types = {
+            clean_cpp_type(item.get("qualified_name") or item.get("name") or "")
+            for file_item in self.api.get("files", [])
+            for item in walk_declarations(file_item.get("declarations", []))
+            if item.get("kind") in TYPE_DECL_KINDS
+        }
+
+        for specialization in self.specializations.values():
+            additional_aliases = set(
+                specialization.override.aliases if specialization.override else ()
+            )
+            extracted_aliases = set(specialization.alias_paths.values())
+            redundant_aliases = sorted(additional_aliases & extracted_aliases)
+            if redundant_aliases:
+                raise ValueError(
+                    f"template specialization {specialization.cpp_type} configures aliases already extracted "
+                    f"from C++: {redundant_aliases}"
+                )
+            primary_parent = specialization.lua_path.rpartition(".")[0]
+            invalid_aliases = sorted(
+                alias
+                for alias in additional_aliases
+                if not alias.rpartition(".")[0] or alias.rpartition(".")[0] != primary_parent
+            )
+            if invalid_aliases:
+                raise ValueError(
+                    f"template specialization {specialization.cpp_type} has additional aliases outside "
+                    f"{primary_parent!r}: {invalid_aliases}"
+                )
+            for lua_path in {
+                specialization.lua_path,
+                *specialization.alias_paths.values(),
+                *additional_aliases,
+            }:
+                previous = lua_name_owners.setdefault(lua_path, specialization.cpp_type)
+                if previous != specialization.cpp_type:
+                    raise ValueError(
+                        f"duplicate Lua template specialization name {lua_path!r}: "
+                        f"{previous} and {specialization.cpp_type}"
+                    )
+
+            profile = specialization.profile
+            declaration = specialization.template_decl
+            children = declaration.get("children", [])
+            fields = {
+                child.get("name")
+                for child in children
+                if child.get("kind") == "FIELD_DECL" and child.get("name")
+            }
+            configured_fields = set(profile.replaced_fields) | {
+                name for name, _lua_type in profile.field_lua_types
+            }
+            missing_fields = sorted(configured_fields - fields)
+            if missing_fields:
+                raise ValueError(
+                    f"template profile {profile.cpp_template} references unknown fields {missing_fields}"
+                )
+
+            override = specialization.override
+            if override is None:
+                continue
+            methods = {
+                child.get("name")
+                for child in children
+                if child.get("kind") == "CXX_METHOD" and child.get("name")
+            }
+            missing_members = sorted(set(override.disabled_members) - methods)
+            if missing_members:
+                raise ValueError(
+                    f"template specialization {specialization.cpp_type} disables unknown members "
+                    f"{missing_members}"
+                )
+            constructor_keys = {
+                ",".join(param.get("name", "") for param in child.get("parameters", []))
+                for child in children
+                if child.get("kind") == "CONSTRUCTOR"
+            }
+            missing_constructors = sorted(set(override.disabled_constructors) - constructor_keys)
+            if missing_constructors:
+                raise ValueError(
+                    f"template specialization {specialization.cpp_type} disables unknown constructors "
+                    f"{missing_constructors}"
+                )
+            missing_dependencies = sorted(set(override.dependencies) - public_types)
+            if missing_dependencies:
+                raise ValueError(
+                    f"template specialization {specialization.cpp_type} references unknown dependencies "
+                    f"{missing_dependencies}"
+                )
+
+    def _build_free_template_operators(self) -> set[tuple[str, str, int]]:
+        operators: set[tuple[str, str, int]] = set()
+        for file_item in self.api.get("files", []):
+            for item in walk_declarations(file_item.get("declarations", [])):
+                if item.get("kind") != "FUNCTION_TEMPLATE" or not item.get("name", "").startswith("operator"):
+                    continue
+                params = item.get("parameters", [])
+                canonical_types = [TypeRef.from_json(param.get("type")).canonical_cpp for param in params]
+                for template_name in TEMPLATE_PROFILES:
+                    if any(template_name + "<" in type_text for type_text in canonical_types):
+                        operators.add((template_name, item.get("name", ""), len(params)))
+        return operators
 
     def _build_class_map(self) -> dict[str, dict[str, Any]]:
         classes: dict[str, dict[str, Any]] = {}
@@ -1369,9 +1637,14 @@ class Sol2Generator:
         cpp_lines = [
             f'#include "{module}/bind_{stem}.hpp"',
             "",
+            "#include <algorithm>",
             "#include <memory>",
+            "#include <sstream>",
+            "#include <stdexcept>",
+            "#include <string>",
             "#include <tuple>",
             "#include <utility>",
+            "#include <vector>",
             "",
             f"void bind_{stem}(sol::state_view lua) {{",
             "    sol::table sf = lua_sf::sf_table(lua);",
@@ -1385,6 +1658,18 @@ class Sol2Generator:
         includes: set[str] = set()
         for item in walk_declarations(file_item.get("declarations", [])):
             type_texts = type_strings_from_item(item)
+            specialization = self.alias_specializations.get(
+                clean_cpp_type(item.get("qualified_name") or "")
+            )
+            if specialization and specialization.override:
+                for dependency in specialization.override.dependencies:
+                    include = self.type_includes.get(clean_cpp_type(dependency))
+                    if include is None:
+                        raise ValueError(
+                            f"no public header include was found for configured dependency {dependency!r}"
+                        )
+                    if include != original_include:
+                        includes.add(include)
             if item.get("kind") in {"CLASS_DECL", "STRUCT_DECL"}:
                 full_name = item.get("qualified_name") or item.get("name")
                 if full_name:
@@ -1416,6 +1701,9 @@ class Sol2Generator:
                 return [f"    // Skipped namespace {name} by generator policy."]
             if name == "sf":
                 return self._emit_children(item, table_var, "sf::")
+            full_namespace = f"{namespace_prefix}{name}".rstrip(":")
+            if full_namespace in LUA_NAMESPACE_PROJECTIONS:
+                return self._emit_children(item, table_var, f"{full_namespace}::")
             child_table = f"{table_var}_{sanitize_identifier(name)}"
             lines = [f'    sol::table {child_table} = {table_var}["{name}"].get_or_create<sol::table>();']
             lines.extend(self._emit_children(item, child_table, f"{namespace_prefix}{name}::"))
@@ -1474,11 +1762,18 @@ class Sol2Generator:
 
     def _emit_class(self, cls: dict[str, Any], table_var: str) -> list[str]:
         full_name = cls.get("qualified_name") or cls.get("name")
-        if not full_name or full_name == "sf::String" or full_name.startswith("sf::priv::"):
+        if (
+            not full_name
+            or full_name == "sf::String"
+            or (
+                full_name.startswith("sf::priv::")
+                and not cls.get("_template_specialization")
+            )
+        ):
             return [f"    // Skipped class {full_name}: converted through lua_sf utilities."]
 
-        lua_name = lua_leaf_for_type(full_name)
-        lua_path = lua_path_for_type(full_name)
+        lua_name = cls.get("_lua_name") or lua_leaf_for_type(full_name)
+        lua_path = cls.get("_lua_path") or lua_path_for_type(full_name)
         var_name = f"type_{sanitize_identifier(full_name)}"
         direct_bases = self._direct_base_type_names(cls, full_name)
         bases = self._base_type_names_for_binding(cls, full_name)
@@ -1494,7 +1789,8 @@ class Sol2Generator:
 
         nested_table_var = f"table_{sanitize_identifier(full_name)}"
         lines.append(f'    sol::table {nested_table_var} = {table_var}["{lua_name}"].get<sol::table>();')
-        lines.append(f"    lua_sf::mark_shared_usertype<{full_name}>(lua);")
+        if not cls.get("_value_type"):
+            lines.append(f"    lua_sf::mark_shared_usertype<{full_name}>(lua);")
         if direct_bases:
             native_bases_var = f"native_bases_{sanitize_identifier(full_name)}"
             lines.append(f"    sol::table {native_bases_var} = lua.create_table();")
@@ -1513,6 +1809,8 @@ class Sol2Generator:
         lines.extend(self._emit_constructors(cls, var_name, full_name))
         lines.extend(self._emit_fields(cls, var_name, full_name))
         lines.extend(self._emit_methods(cls, var_name, full_name))
+        lines.extend(self._emit_configured_members(cls, var_name, full_name, lua_path))
+        lines.extend(self._emit_free_template_operators(cls, var_name, full_name, lua_path))
 
         for child in cls.get("children", []):
             if child.get("kind") == "ENUM_DECL":
@@ -1525,6 +1823,276 @@ class Sol2Generator:
                 lines.extend(self._emit_type_alias(child, nested_table_var, full_name, lua_path))
         return lines
 
+    @staticmethod
+    def _replace_template_text(value: str, parameters: list[dict[str, Any]], args: tuple[str, ...]) -> str:
+        result = value
+        for index, (parameter, argument) in enumerate(zip(parameters, args)):
+            result = re.sub(rf"type-parameter-\d+-{index}(?!\d)", argument, result)
+            name = parameter.get("name") or ""
+            if name:
+                result = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", argument, result)
+        return clean_cpp_type(result)
+
+    def _instantiate_template(self, specialization: TemplateSpecialization) -> dict[str, Any]:
+        clone = copy.deepcopy(specialization.template_decl)
+        parameters = clone.get("template_parameters", [])
+
+        def replace_types(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, child in list(value.items()):
+                    if key in {"spelling", "canonical", "qualified_name"} and isinstance(child, str):
+                        value[key] = self._replace_template_text(child, parameters, specialization.args)
+                    elif key == "name" and "access" in value and isinstance(child, str):
+                        value[key] = self._replace_template_text(child, parameters, specialization.args)
+                    else:
+                        replace_types(child)
+            elif isinstance(value, list):
+                for child in value:
+                    replace_types(child)
+
+        replace_types(clone)
+        override = specialization.override
+        disabled_members = set(override.disabled_members if override else ())
+        disabled_constructors = set(override.disabled_constructors if override else ())
+        children: list[dict[str, Any]] = []
+        for child in clone.get("children", []):
+            kind = child.get("kind")
+            if kind == "FUNCTION_TEMPLATE":
+                continue
+            if kind == "CXX_METHOD" and child.get("name") in disabled_members:
+                continue
+            if kind == "CONSTRUCTOR":
+                parameter_key = ",".join(param.get("name", "") for param in child.get("parameters", []))
+                if parameter_key in disabled_constructors:
+                    continue
+            children.append(child)
+        clone["children"] = children
+        clone["kind"] = "STRUCT_DECL"
+        clone["qualified_name"] = specialization.cpp_type
+        clone["name"] = specialization.cpp_type.rsplit("::", 1)[-1]
+        clone["_lua_path"] = specialization.lua_path
+        clone["_lua_name"] = specialization.lua_path.rsplit(".", 1)[-1]
+        clone["_value_type"] = specialization.profile.value_type
+        clone["_template_specialization"] = specialization
+        clone.pop("template_parameters", None)
+        unresolved: list[str] = []
+        parameter_names = [parameter.get("name", "") for parameter in parameters if parameter.get("name")]
+
+        def find_unresolved(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key in {"spelling", "canonical", "qualified_name"} and isinstance(child, str):
+                        if re.search(r"type-parameter-\d+-\d+", child) or any(
+                            re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", child)
+                            for name in parameter_names
+                        ):
+                            unresolved.append(child)
+                    else:
+                        find_unresolved(child)
+            elif isinstance(value, list):
+                for child in value:
+                    find_unresolved(child)
+
+        find_unresolved(clone)
+        if unresolved:
+            raise ValueError(
+                f"template specialization {specialization.cpp_type} contains unreplaced parameters: "
+                f"{sorted(set(unresolved))}"
+            )
+        return clone
+
+    def _emit_specialization_alias(
+        self,
+        item: dict[str, Any],
+        table_var: str,
+        specialization: TemplateSpecialization,
+    ) -> list[str]:
+        qualified_name = clean_cpp_type(item.get("qualified_name") or "")
+        alias_path = specialization.alias_paths[qualified_name]
+        lines: list[str] = []
+        if qualified_name == specialization.primary_alias:
+            lines.extend(self._emit_class(self._instantiate_template(specialization), table_var))
+            if specialization.override:
+                owner = specialization.lua_path.rpartition(".")[0]
+                for configured_alias in specialization.override.aliases:
+                    alias_leaf = configured_alias.rsplit(".", 1)[-1]
+                    lines.extend(
+                        [
+                            f'    LUASF_STUB_VALUE({cpp_string_literal(owner)}, '
+                            f'{cpp_string_literal(alias_leaf)}, '
+                            f'{cpp_string_literal(specialization.lua_path)});',
+                            f'    {table_var}[{cpp_string_literal(alias_leaf)}] = '
+                            f'{lua_table_expression(specialization.cpp_type)};',
+                        ]
+                    )
+        if alias_path != specialization.lua_path:
+            alias_leaf = alias_path.rsplit(".", 1)[-1]
+            owner = stub_owner_for_table_var(table_var)
+            lines.extend(
+                [
+                    f'    LUASF_STUB_VALUE({cpp_string_literal(owner)}, {cpp_string_literal(alias_leaf)}, '
+                    f'{cpp_string_literal(specialization.lua_path)});',
+                    f'    {table_var}[{cpp_string_literal(alias_leaf)}] = {lua_table_expression(specialization.cpp_type)};',
+                ]
+            )
+        return lines
+
+    @staticmethod
+    def _configured_bindings(cls: dict[str, Any], kind: str) -> list[ConfiguredBinding]:
+        specialization: TemplateSpecialization | None = cls.get("_template_specialization")
+        if specialization is None:
+            return []
+        bindings = list(specialization.profile.configured_bindings)
+        if specialization.override:
+            bindings.extend(specialization.override.configured_bindings)
+        return [binding for binding in bindings if binding.kind == kind]
+
+    def _configured_context(
+        self,
+        cls: dict[str, Any],
+        var_name: str,
+        full_name: str,
+        lua_path: str,
+        binding: ConfiguredBinding,
+    ) -> dict[str, str]:
+        context = {
+            "cpp_type": full_name,
+            "lua_path": lua_path,
+            "lua_leaf": lua_path.rsplit(".", 1)[-1],
+            "var_name": var_name,
+        }
+        context.update(dict(binding.values))
+        field_names = [name.strip() for name in context.get("fields", "").split(",") if name.strip()]
+        if field_names:
+            field_items = {
+                child.get("name"): child
+                for child in cls.get("children", [])
+                if child.get("kind") == "FIELD_DECL"
+            }
+            missing = [name for name in field_names if name not in field_items]
+            if missing:
+                raise ValueError(f"configured fields {missing} do not exist on {full_name}")
+            context["field_exprs"] = ", ".join(f"self.{name}" for name in field_names)
+            context["field_lua_returns"] = ", ".join(
+                type_ref_to_lua_type(TypeRef.from_json(field_items[name].get("type")))
+                for name in field_names
+            )
+            context["stream_components"] = ' << ", " << '.join(f"self.{name}" for name in field_names)
+        return context
+
+    def _render_configured_binding(
+        self,
+        cls: dict[str, Any],
+        var_name: str,
+        full_name: str,
+        lua_path: str,
+        binding: ConfiguredBinding,
+    ) -> tuple[str, dict[str, str]]:
+        context = self._configured_context(cls, var_name, full_name, lua_path, binding)
+        try:
+            return render_template(binding.template, **context), context
+        except KeyError as exc:
+            raise ValueError(
+                f"invalid configured binding template {binding.template!r} for {full_name}: {exc}"
+            ) from exc
+
+    def _emit_configured_members(
+        self,
+        cls: dict[str, Any],
+        var_name: str,
+        full_name: str,
+        lua_path: str,
+    ) -> list[str]:
+        lines: list[str] = []
+        for binding in self._configured_bindings(cls, "member"):
+            rendered, _context = self._render_configured_binding(
+                cls, var_name, full_name, lua_path, binding
+            )
+            lines.extend(f"    {line}" if line else "" for line in rendered.splitlines())
+        return lines
+
+    def _emit_free_template_operators(
+        self,
+        cls: dict[str, Any],
+        var_name: str,
+        full_name: str,
+        lua_path: str,
+    ) -> list[str]:
+        specialization: TemplateSpecialization | None = cls.get("_template_specialization")
+        if specialization is None:
+            return []
+        allowed = specialization.profile.allowed_operators
+        if specialization.override and specialization.override.allowed_operators is not None:
+            allowed = specialization.override.allowed_operators
+        if not allowed:
+            return []
+
+        scalar_cpp = specialization.args[0] if specialization.args else ""
+        scalar_ref = TypeRef(spelling=scalar_cpp, canonical=scalar_cpp)
+        scalar_param = lua_param_type(scalar_ref) if scalar_cpp else "any"
+        scalar_prelude, scalar_expr = from_lua_expr(scalar_ref, "scalar") if scalar_cpp else ([], "scalar")
+        if scalar_prelude:
+            raise ValueError(f"operator scalar conversion for {full_name} unexpectedly requires a prelude")
+        scalar_lua = cpp_type_to_lua_type(scalar_cpp) if scalar_cpp else "any"
+
+        lines: list[str] = []
+        for operator_key in allowed:
+            name, _, shape = operator_key.partition(":")
+            arity = 1 if shape == "unary" else 2
+            if (specialization.template_name, name, arity) not in self.free_template_operators:
+                raise ValueError(
+                    f"configured operator {operator_key} for {full_name} was not found in the extracted API"
+                )
+            if name == "operator-" and shape == "unary":
+                lines.append(
+                    f"    {var_name}[sol::meta_function::unary_minus] = "
+                    f"[](const {full_name}& value) {{ return -value; }};"
+                )
+                lines.append(f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, "unm: {lua_path}");')
+            elif name in {"operator+", "operator-", "operator=="}:
+                symbol = {"operator+": "+", "operator-": "-", "operator==": "=="}[name]
+                meta = {
+                    "operator+": "addition",
+                    "operator-": "subtraction",
+                    "operator==": "equal_to",
+                }[name]
+                lines.append(
+                    f"    {var_name}[sol::meta_function::{meta}] = "
+                    f"[](const {full_name}& left, const {full_name}& right) {{ return left {symbol} right; }};"
+                )
+                result_type = "boolean" if name == "operator==" else lua_path
+                annotation = "eq" if name == "operator==" else ("add" if name == "operator+" else "sub")
+                lines.append(
+                    f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, '
+                    f'{cpp_string_literal(f"{annotation}({lua_path}): {result_type}")});'
+                )
+            elif name == "operator*":
+                lines.append(f"    {var_name}[sol::meta_function::multiplication] = sol::overload(")
+                lines.append(
+                    f"        []({full_name} value, {scalar_param} scalar) {{ return value * {scalar_expr}; }},"
+                )
+                left_expr = scalar_expr.replace("scalar", "scalar")
+                lines.append(
+                    f"        []({scalar_param} scalar, {full_name} value) {{ return {left_expr} * value; }}"
+                )
+                lines.append("    );")
+                lines.append(
+                    f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, '
+                    f'{cpp_string_literal(f"mul({scalar_lua}): {lua_path}")});'
+                )
+            elif name == "operator/":
+                lines.append(
+                    f"    {var_name}[sol::meta_function::division] = "
+                    f"[]({full_name} value, {scalar_param} scalar) {{ return value / {scalar_expr}; }};"
+                )
+                lines.append(
+                    f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, '
+                    f'{cpp_string_literal(f"div({scalar_lua}): {lua_path}")});'
+                )
+            else:
+                raise ValueError(f"unsupported configured free operator {operator_key} for {full_name}")
+        return lines
+
     def _emit_type_alias(
         self,
         item: dict[str, Any],
@@ -1535,6 +2103,10 @@ class Sol2Generator:
         name = item.get("name", "")
         if not name or name in IGNORE_NAMES:
             return []
+        qualified_name = clean_cpp_type(item.get("qualified_name") or "")
+        specialization = self.alias_specializations.get(qualified_name)
+        if specialization is not None:
+            return self._emit_specialization_alias(item, table_var, specialization)
         type_ref = TypeRef.from_json(item.get("type"))
         target_cpp = clean_cpp_type(type_ref.canonical_cpp or type_ref.cpp or type_ref.source)
         if not target_cpp:
@@ -1568,17 +2140,24 @@ class Sol2Generator:
 
     def _stub_field_lines(self, cls: dict[str, Any]) -> list[str]:
         lines: list[str] = []
+        specialization: TemplateSpecialization | None = cls.get("_template_specialization")
+        field_type_overrides = (
+            dict(specialization.profile.field_lua_types) if specialization else {}
+        )
         for field_item in cls.get("children", []):
             if field_item.get("kind") != "FIELD_DECL" or field_item.get("access") not in (None, "public"):
                 continue
             field_name = field_item.get("name")
             type_ref = TypeRef.from_json(field_item.get("type"))
-            if not field_name or should_skip_type(type_ref):
+            if not field_name:
+                continue
+            field_lua_type = field_type_overrides.get(field_name)
+            if field_lua_type is None and should_skip_type(type_ref):
                 continue
             lines.extend(stub_doc_lines(field_item))
             lines.append(
                 f'    LUASF_STUB_FIELD({cpp_string_literal(field_name)}, '
-                f'{cpp_string_literal(type_ref_to_lua_type(type_ref))});'
+                f'{cpp_string_literal(field_lua_type or type_ref_to_lua_type(type_ref))});'
             )
         return lines
 
@@ -1665,7 +2244,13 @@ class Sol2Generator:
                 if planned.signature_key in seen:
                     continue
                 seen.add(planned.signature_key)
-                lambda_code, reason = make_lambda(ctor_item, full_name, full_name, is_constructor=True)
+                lambda_code, reason = make_lambda(
+                    ctor_item,
+                    full_name,
+                    full_name,
+                    is_constructor=True,
+                    value_constructor=bool(cls.get("_value_type")),
+                )
                 if reason:
                     self.skipped.append(f"{full_name}::{ctor.get('displayname')}: {reason}")
                     continue
@@ -1680,31 +2265,54 @@ class Sol2Generator:
                         ))
                         overload_index += 1
 
+        configured_constructors: list[tuple[str, str]] = []
+        for binding in self._configured_bindings(cls, "constructor"):
+            rendered, context = self._render_configured_binding(
+                cls, var_name, full_name, lua_owner, binding
+            )
+            if not binding.stub_signature:
+                raise ValueError(f"configured constructor {binding.template} for {full_name} has no stub signature")
+            try:
+                stub_type = binding.stub_signature.format(**context)
+            except KeyError as exc:
+                raise ValueError(
+                    f"invalid configured constructor signature for {full_name}: {exc}"
+                ) from exc
+            configured_constructors.append((rendered, stub_type))
+
         if not overloads:
             # Synthesize a default constructor for aggregate types
             # (types with public fields but no user-declared constructors).
             if self._has_default_constructible_aggregate(cls):
-                default_lambda = f"[]() {{\n    return lua_sf::makeLuaSharedObject<{full_name}>();\n}}"
+                if cls.get("_value_type"):
+                    default_lambda = f"[]() {{\n    return {full_name}{{}};\n}}"
+                else:
+                    default_lambda = f"[]() {{\n    return lua_sf::makeLuaSharedObject<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
                 overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub, None))
             elif self._has_implicit_default_constructor(cls):
-                default_lambda = f"[]() {{\n    return lua_sf::makeLuaSharedObject<{full_name}>();\n}}"
+                if cls.get("_value_type"):
+                    default_lambda = f"[]() {{\n    return {full_name}{{}};\n}}"
+                else:
+                    default_lambda = f"[]() {{\n    return lua_sf::makeLuaSharedObject<{full_name}>();\n}}"
                 default_stub = StubSignature((), (lua_owner,))
                 overloads.append(((0, 0, 0, overload_index), default_lambda, default_stub, None))
-            else:
+            elif not configured_constructors:
                 return []
         overloads.sort(key=lambda item: item[0])
         # Emit stub annotations for all overloads, longest first.
-        sorted_stubs = [item[2] for item in overloads]
+        sorted_stub_types = [stub_fun_type(item[2]) for item in overloads]
+        sorted_stub_types.extend(stub_type for _lambda, stub_type in configured_constructors)
         stub_lines = stub_doc_lines({"doc": first_stub_doc([item[3] for item in overloads])})
-        for i, sig in enumerate(sorted_stubs):
+        for i, function_type in enumerate(sorted_stub_types):
             macro = "LUASF_STUB_FUNCTION" if i == 0 else "LUASF_STUB_OVERLOAD"
             stub_lines.append(
                 f'    {macro}({cpp_string_literal(lua_owner)}, "new", '
-                f'{cpp_string_literal(stub_fun_type(sig))});'
+                f'{cpp_string_literal(function_type)});'
             )
 
         lambdas = [item[1] for item in overloads]
+        lambdas.extend(lambda_code for lambda_code, _stub_type in configured_constructors)
         if len(lambdas) == 1:
             lines = stub_lines
             lines.append(f'    {var_name}.set_function("new", sol::factories(')
@@ -1753,10 +2361,14 @@ class Sol2Generator:
 
     def _emit_fields(self, cls: dict[str, Any], var_name: str, full_name: str) -> list[str]:
         lines: list[str] = []
+        specialization: TemplateSpecialization | None = cls.get("_template_specialization")
+        replaced_fields = set(specialization.profile.replaced_fields if specialization else ())
         for field_item in cls.get("children", []):
             if field_item.get("kind") != "FIELD_DECL" or field_item.get("access") not in (None, "public"):
                 continue
             field_name = field_item.get("name")
+            if field_name in replaced_fields:
+                continue
             type_ref = TypeRef.from_json(field_item.get("type"))
             if should_skip_type(type_ref):
                 lines.append(f"    // Skipped field {full_name}::{field_name}: unsupported type {type_ref.cpp}")

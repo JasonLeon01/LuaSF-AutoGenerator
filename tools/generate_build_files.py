@@ -15,6 +15,7 @@ try:
         MANUAL_HEADER_DECLARATION_PREFIX_OWNERS,
         MANUAL_HEADER_OWNERS,
         MODULE_ORDER,
+        TEMPLATE_SPECIALIZATION_OVERRIDES,
         TYPE_DECL_KINDS,
     )
 except ImportError:
@@ -23,6 +24,7 @@ except ImportError:
         MANUAL_HEADER_DECLARATION_PREFIX_OWNERS,
         MANUAL_HEADER_OWNERS,
         MODULE_ORDER,
+        TEMPLATE_SPECIALIZATION_OVERRIDES,
         TYPE_DECL_KINDS,
     )
 
@@ -475,6 +477,15 @@ def build_dependency_graph(
             continue
 
         for item in walk_declarations(file_item.get("declarations", [])):
+            if item.get("kind") in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}:
+                type_info = item.get("type") or {}
+                target = clean_cpp_type(type_info.get("canonical") or type_info.get("spelling") or "")
+                override = TEMPLATE_SPECIALIZATION_OVERRIDES.get(target)
+                if override:
+                    for dependency in override.dependencies:
+                        owner = owners.get(clean_cpp_type(dependency))
+                        if owner and owner != name and owner in graph:
+                            graph[name].add(owner)
             for type_text in type_strings(item):
                 for type_name, owner in sorted_type_owners:
                     if owner == name or owner not in graph:
@@ -516,6 +527,22 @@ def input_hash(api_path: Path, entries: dict[str, BindingEntry]) -> str:
     digest = hashlib.sha256()
     digest.update(f"schema={SCHEMA_VERSION};cache={ORDER_CACHE_VERSION}".encode())
     digest.update(api_path.read_bytes())
+    digest.update(
+        repr(
+            sorted(
+                (name, tuple(sorted(dependencies)))
+                for name, dependencies in MANUAL_DEPENDENCIES.items()
+            )
+        ).encode()
+    )
+    digest.update(
+        repr(
+            sorted(
+                (name, tuple(sorted(override.dependencies)))
+                for name, override in TEMPLATE_SPECIALIZATION_OVERRIDES.items()
+            )
+        ).encode()
+    )
     for entry in sorted(entries.values(), key=lambda item: item.name):
         digest.update(
             json.dumps(
