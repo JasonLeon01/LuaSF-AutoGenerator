@@ -17,7 +17,7 @@ set(LUASF_EXTENSION_ARCHIVE_DIR "${{LUASF_BINARY_ROOT}}/lib/$<CONFIG>/extension"
 
 option(LUASF_BUILD_SHARED_SFML "Build SFML as shared libraries for LuaSF" ON)
 option(LUASF_GENERATE_LUA_STUB "Generate Lua language-server stub from the built LuaSF module" ON)
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "OHOS")
     set(LUASF_BUILD_SHARED_SFML OFF CACHE BOOL "Build SFML as shared libraries for LuaSF" FORCE)
     set(LUASF_LIBRARY_TYPE STATIC)
     set(LUASF_EXTENSION_LIBRARY_TYPE STATIC)
@@ -88,6 +88,9 @@ if(NOT TARGET ${{LUASF_LUA_TARGET}})
         )
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_compile_definitions(${{LUASF_LUA_TARGET}} PRIVATE LUA_USE_IOS)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+        target_compile_definitions(${{LUASF_LUA_TARGET}} PRIVATE LUA_USE_POSIX)
+        target_link_libraries(${{LUASF_LUA_TARGET}} PRIVATE m)
     elseif(APPLE)
         target_compile_definitions(${{LUASF_LUA_TARGET}} PRIVATE LUA_USE_MACOSX)
     elseif(UNIX)
@@ -104,7 +107,9 @@ if(NOT TARGET ${{LUASF_LUA_TARGET}})
     )
 endif()
 
-if(NOT CMAKE_CROSSCOMPILING AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if(NOT CMAKE_CROSSCOMPILING AND
+   NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND
+   NOT CMAKE_SYSTEM_NAME STREQUAL "OHOS")
     add_executable({target_name}_luac
         "${{LUASF_ROOT}}/third_party/Lua/src/luac.c"
         ${{LUA_SOURCES}}
@@ -277,6 +282,11 @@ function(luasf_copy_target_runtime_files target_name include_lua_runtime)
         message(FATAL_ERROR "luasf_copy_target_runtime_files target does not exist: ${{target_name}}")
     endif()
 
+    get_target_property(_luasf_library_type {target_name} TYPE)
+    if(_luasf_library_type STREQUAL "STATIC_LIBRARY")
+        return()
+    endif()
+
     set(_luasf_runtime_files)
     if(include_lua_runtime)
         list(APPEND _luasf_runtime_files "$<TARGET_FILE:{target_name}_lua_shared>")
@@ -304,6 +314,11 @@ endfunction()
 function(luasf_copy_runtime_files target_name)
     if(NOT TARGET "${{target_name}}")
         message(FATAL_ERROR "luasf_copy_runtime_files target does not exist: ${{target_name}}")
+    endif()
+
+    get_target_property(_luasf_library_type {target_name} TYPE)
+    if(_luasf_library_type STREQUAL "STATIC_LIBRARY")
+        return()
     endif()
 
     set(_luasf_runtime_files
@@ -338,12 +353,11 @@ luasf_copy_target_runtime_files({target_name} TRUE)
 luasf_copy_target_runtime_files({target_name}_lua_extension FALSE)
 
 function(luasf_add_lua_stub target_name)
-    if(NOT LUASF_GENERATE_LUA_STUB)
+    if(CMAKE_CROSSCOMPILING)
         return()
     endif()
 
-    if(CMAKE_CROSSCOMPILING)
-        message(WARNING "LUASF_GENERATE_LUA_STUB is ON, but LuaSF cannot run the stub dumper while cross-compiling.")
+    if(NOT LUASF_GENERATE_LUA_STUB)
         return()
     endif()
 
