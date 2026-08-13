@@ -17,6 +17,12 @@ try:
     from .binding_config import (
         BINDING_TEMPLATES,
         BYTE_TYPES,
+        CALLBACK_CODEC_REGISTRY,
+        CALLBACK_CODEC_SCHEMA_VERSION,
+        CallbackCodec,
+        CallbackParameter,
+        CallbackReturn,
+        CallbackSelector,
         ConfiguredBinding,
         CONVERSION_REGISTRY,
         CPP_BUILTIN_TYPES,
@@ -56,6 +62,12 @@ except ImportError:
     from binding_config import (
         BINDING_TEMPLATES,
         BYTE_TYPES,
+        CALLBACK_CODEC_REGISTRY,
+        CALLBACK_CODEC_SCHEMA_VERSION,
+        CallbackCodec,
+        CallbackParameter,
+        CallbackReturn,
+        CallbackSelector,
         ConfiguredBinding,
         CONVERSION_REGISTRY,
         CPP_BUILTIN_TYPES,
@@ -95,11 +107,14 @@ except ImportError:
 # Re-export everything that external callers need
 __all__ = [
     # From binding_config (re-exported for convenience)
-    "AUDIO_EFFECT_PROCESSOR_LUA_TYPE",
-    "AUDIO_EFFECT_PROCESSOR_SIGNATURE",
-    "SPECIAL_CALLBACK_LUA_TYPES",
     "BINDING_TEMPLATES",
     "BYTE_TYPES",
+    "CALLBACK_CODEC_REGISTRY",
+    "CALLBACK_CODEC_SCHEMA_VERSION",
+    "CallbackCodec",
+    "CallbackParameter",
+    "CallbackReturn",
+    "CallbackSelector",
     "ConfiguredBinding",
     "CONVERSION_REGISTRY",
     "CPP_BUILTIN_TYPES",
@@ -151,10 +166,13 @@ __all__ = [
     "walk_declarations",
     # Query functions
     "get_conversion",
+    "get_callback_codec",
     "get_lifecycle",
     "is_long_lived_memory_type",
     "is_long_lived_stream_type",
     "packet_io_info",
+    "callback_codec_manifest",
+    "validate_callback_codec_registry",
     # Template rendering
     "render_template",
     # Lambda generators
@@ -171,9 +189,13 @@ __all__ = [
 # Re-export data from binding_config
 try:
     from .binding_config import (  # noqa: E402
-        AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
-        AUDIO_EFFECT_PROCESSOR_SIGNATURE,
         BYTE_TYPES,
+        CALLBACK_CODEC_REGISTRY,
+        CALLBACK_CODEC_SCHEMA_VERSION,
+        CallbackCodec,
+        CallbackParameter,
+        CallbackReturn,
+        CallbackSelector,
         ConfiguredBinding,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
@@ -197,7 +219,6 @@ try:
         PacketIoType,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
-        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
@@ -210,9 +231,13 @@ try:
     )
 except ImportError:
     from binding_config import (  # noqa: E402
-        AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
-        AUDIO_EFFECT_PROCESSOR_SIGNATURE,
         BYTE_TYPES,
+        CALLBACK_CODEC_REGISTRY,
+        CALLBACK_CODEC_SCHEMA_VERSION,
+        CallbackCodec,
+        CallbackParameter,
+        CallbackReturn,
+        CallbackSelector,
         ConfiguredBinding,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
@@ -236,7 +261,6 @@ except ImportError:
         PacketIoType,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
-        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
@@ -252,6 +276,133 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Query functions
 # ---------------------------------------------------------------------------
+
+
+def get_callback_codec(
+    semantic_type: str,
+    qualified_function: str = "",
+    parameter_name: str = "",
+    callable_signature: str = "",
+) -> CallbackCodec | None:
+    semantic_type = remove_cvref(clean_cpp_type(semantic_type))
+    callable_signature = clean_cpp_type(callable_signature)
+    for callback_codec in CALLBACK_CODEC_REGISTRY:
+        selector = callback_codec.selector
+        if selector.semantic_alias and semantic_type != clean_cpp_type(selector.semantic_alias):
+            continue
+        if selector.qualified_function and qualified_function != selector.qualified_function:
+            continue
+        if selector.parameter_name and parameter_name != selector.parameter_name:
+            continue
+        if selector.callable_signature and callable_signature != clean_cpp_type(selector.callable_signature):
+            continue
+        return callback_codec
+    return None
+
+
+def validate_callback_codec_registry() -> None:
+    names: set[str] = set()
+    selectors: set[tuple[str, str, str, str]] = set()
+    allowed_directions = {"fromLua", "toLua"}
+    allowed_access = {"read", "write", "readWrite"}
+
+    for callback_codec in CALLBACK_CODEC_REGISTRY:
+        if not callback_codec.name or callback_codec.name in names:
+            raise ValueError(f"duplicate or empty callback codec name: {callback_codec.name!r}")
+        names.add(callback_codec.name)
+
+        selector = callback_codec.selector
+        selector_key = (
+            clean_cpp_type(selector.semantic_alias),
+            selector.qualified_function,
+            selector.parameter_name,
+            clean_cpp_type(selector.callable_signature),
+        )
+        if not any(selector_key) or selector_key in selectors:
+            raise ValueError(f"duplicate or empty callback codec selector: {selector_key!r}")
+        selectors.add(selector_key)
+
+        if (
+            not callback_codec.canonical_type.startswith("std::function<")
+            or not callback_codec.native_callable
+            or not callback_codec.codec
+            or not callback_codec.lua_type
+            or not callback_codec.lua_signature
+        ):
+            raise ValueError(f"callback codec {callback_codec.name!r} has an incomplete conversion policy")
+        if not callback_codec.directions or len(set(callback_codec.directions)) != len(callback_codec.directions):
+            raise ValueError(f"callback codec {callback_codec.name!r} has invalid directions")
+        if not set(callback_codec.directions).issubset(allowed_directions):
+            raise ValueError(f"callback codec {callback_codec.name!r} has unknown directions")
+
+        parameter_names: set[str] = set()
+        for parameter in callback_codec.parameters:
+            if not parameter.name or parameter.name in parameter_names:
+                raise ValueError(f"callback codec {callback_codec.name!r} has duplicate parameter names")
+            parameter_names.add(parameter.name)
+            if not parameter.role or parameter.access not in allowed_access:
+                raise ValueError(f"callback codec {callback_codec.name!r} has invalid parameter metadata")
+
+        return_names: set[str] = set()
+        for result in callback_codec.returns:
+            if not result.name or result.name in return_names or not result.role:
+                raise ValueError(f"callback codec {callback_codec.name!r} has invalid return metadata")
+            return_names.add(result.name)
+
+
+def callback_codec_manifest() -> dict[str, Any]:
+    validate_callback_codec_registry()
+    codecs: list[dict[str, Any]] = []
+    for callback_codec in CALLBACK_CODEC_REGISTRY:
+        selector = callback_codec.selector
+        selector_data: dict[str, Any] = {
+            "kind": "functionParameter" if selector.qualified_function else "alias",
+        }
+        if selector.semantic_alias:
+            selector_data["cppName"] = selector.semantic_alias
+        if selector.qualified_function:
+            selector_data["qualifiedFunction"] = selector.qualified_function
+        if selector.parameter_name:
+            selector_data["parameterName"] = selector.parameter_name
+        if selector.callable_signature:
+            selector_data["callableSignature"] = selector.callable_signature
+
+        codecs.append({
+            "name": callback_codec.name,
+            "selector": selector_data,
+            "canonicalType": callback_codec.canonical_type,
+            "codec": callback_codec.codec,
+            "luaType": callback_codec.lua_type,
+            "luaSignature": callback_codec.lua_signature,
+            "allowNil": callback_codec.allow_nil,
+            "threadPolicy": callback_codec.thread_policy,
+            "directions": list(callback_codec.directions),
+            "parameters": [
+                {
+                    "name": parameter.name,
+                    "role": parameter.role,
+                    "access": parameter.access,
+                    "nullable": parameter.nullable,
+                    "unit": parameter.unit,
+                }
+                for parameter in callback_codec.parameters
+            ],
+            "returns": [
+                {
+                    "name": result.name,
+                    "role": result.role,
+                    "nullable": result.nullable,
+                    "unit": result.unit,
+                }
+                for result in callback_codec.returns
+            ],
+            "clearSetterOnQuiesce": callback_codec.clear_setter_on_quiesce,
+        })
+
+    return {
+        "schemaVersion": CALLBACK_CODEC_SCHEMA_VERSION,
+        "callbacks": codecs,
+    }
 
 
 def get_lifecycle(qualified_name: str) -> TypeLifecycle | None:

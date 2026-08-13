@@ -62,8 +62,8 @@ sh pack_result.sh
 
 Archives are written to `output/packages/`:
 
-- `LuaSF-source.{tar.gz|zip}` — generated source project from `output/`, without `bin/` or `build/`
-- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — embedded package
+- `LuaSF-source.{tar.gz|zip}` — generated source project from `output/`, including `callback_codecs.json`, without `bin/` or `build/`
+- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — embedded package, including `callback_codecs.json` and its matching `sfml_api.json` validation snapshot
 - `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — Lua extension package
 
 `pack_result.sh` creates `.tar.gz` archives. `pack_result.bat` creates `.zip` archives.
@@ -235,12 +235,33 @@ The collected package exposes these CMake items:
 - `LuaSF::LuaSF`: imported LuaSF dynamic-library target.
 - `LuaSF::Lua`: imported bundled Lua dynamic-library target.
 - `LUASF_STUB_FILE`: absolute path to `stub/LuaSF.d.lua`.
+- `LUASF_CALLBACK_CODECS_FILE`: absolute path to the schema-v1 `callback_codecs.json` manifest.
 - `LUASF_RUNTIME_FILES`: bundled runtime files that should be placed next to the executable.
 - `LUASF_RUNTIME_DLLS`: compatibility alias for `LUASF_RUNTIME_FILES`.
 - `luasf_copy_runtime_files(target)`: post-build copy helper for all bundled runtime files.
 - `luasf_copy_runtime_dlls(target)`: compatibility alias for `luasf_copy_runtime_files(target)`.
 
 The generated `.d.lua` is a global declaration file and starts with `---@meta`, allowing EmmyLua to expose the `sf` API from a dedicated stub library directory.
+
+`callback_codecs.json` describes callback conversions by semantic C++ alias or an exact function-parameter use site. Consumers should read this generated manifest instead of matching expanded `std::function` signatures, and may validate its canonical types against the adjacent `sfml_api.json` snapshot. In particular, `sf::SoundSource::EffectProcessor` is the only selector for the interleaved-float audio codec; an unrelated alias with the same canonical signature does not opt into that protocol.
+
+### Sound effect callback contract
+
+`sf.SoundSource.EffectProcessor` is exposed as a five-argument, no-return callback:
+
+```lua
+fun(
+    inputFrames: sf.ReadOnlyFloatBufferView|nil,
+    inputFrameCount: sf.UIntRef,
+    outputFrames: sf.WriteOnlyFloatBufferView,
+    outputFrameCount: sf.UIntRef,
+    frameChannelCount: integer
+)
+```
+
+Buffer indices are 1-based flat interleaved samples; `#view` and `view:size()` are sample counts. `UIntRef.value` is mutable, while `UIntRef.capacity` is read-only, and both are measured in frames. Input is `nil` at end of stream, allowing an effect to emit buffered tail audio. The callback return value is ignored.
+
+Views and refs borrow SFML's native buffers and expire permanently when the callback returns. Input writes, output reads, invalid indices or counts, and expired access are errors. The audio thread tries to enter the Lua state without waiting: contention and state shutdown bypass the effect for the current block. A Lua or contract error latches the shared processor context, so its copies subsequently bypass; the fixed-capacity deferred error can be consumed once on a logic thread with `LuaSF_take_deferred_callback_error`.
 
 ## Runtime Notes
 

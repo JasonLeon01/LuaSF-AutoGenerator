@@ -10,6 +10,7 @@
 #include <SFML/Window/WindowHandle.hpp>
 
 #include "lua_stub.hpp"
+#include "LuaCallbackCodec.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -163,28 +164,22 @@ sol::object optional_to_object(sol::state_view lua,
 template <typename T>
 sol::object optional_to_object(sol::state_view lua, std::optional<T> &&value);
 
-sol::table audioFramesToTable(sol::state_view lua, const float *frames,
-                              unsigned int frameCount,
-                              unsigned int frameChannelCount);
-
-void copyAudioFramesFromObject(const sol::object &object, float *frames,
-                               unsigned int frameCount,
-                               unsigned int frameChannelCount);
-
-void updateAudioFrameCount(const sol::object &object, unsigned int &frameCount,
-                           unsigned int frameCapacity);
-
-void passthroughAudioFrames(const float *inputFrames,
-                            unsigned int &inputFrameCount, float *outputFrames,
-                            unsigned int &outputFrameCount,
-                            unsigned int frameChannelCount) noexcept;
-
 template <typename Signature>
 std::function<Signature> function_from_object(const sol::object &object);
 
 template <typename Signature>
 std::function<Signature>
 function_from_object_at_native_thread_boundary(const sol::object &object);
+
+namespace callback {
+
+template <typename Signature>
+std::function<Signature>
+native_thread_from_object(const sol::object &object) {
+  return function_from_object_at_native_thread_boundary<Signature>(object);
+}
+
+} // namespace callback
 
 using LongLivedMemoryBuffer = std::shared_ptr<std::vector<std::byte>>;
 

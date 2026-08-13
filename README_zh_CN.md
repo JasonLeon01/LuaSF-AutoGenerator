@@ -62,8 +62,8 @@ sh pack_result.sh
 
 压缩包会写入 `output/packages/`：
 
-- `LuaSF-source.{tar.gz|zip}` — 来自 `output/` 的生成源码工程，不含 `bin/` 和 `build/`
-- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — 嵌入式包
+- `LuaSF-source.{tar.gz|zip}` — 来自 `output/` 的生成源码工程，包含 `callback_codecs.json`，不含 `bin/` 和 `build/`
+- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — 嵌入式包，包含 `callback_codecs.json` 及其匹配的 `sfml_api.json` 校验快照
 - `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — Lua 扩展包
 
 `pack_result.sh` 生成 `.tar.gz` 压缩包，`pack_result.bat` 生成 `.zip` 压缩包。
@@ -235,12 +235,33 @@ end
 - `LuaSF::LuaSF`：导入的 LuaSF 动态库 target。
 - `LuaSF::Lua`：导入的打包 Lua 动态库 target。
 - `LUASF_STUB_FILE`：指向 `stub/LuaSF.d.lua` 的绝对路径。
+- `LUASF_CALLBACK_CODECS_FILE`：指向 schema v1 `callback_codecs.json` manifest 的绝对路径。
 - `LUASF_RUNTIME_FILES`：运行时需要放到可执行文件旁边的打包文件。
 - `LUASF_RUNTIME_DLLS`：`LUASF_RUNTIME_FILES` 的兼容别名。
 - `luasf_copy_runtime_files(target)`：用于复制所有打包运行时文件的 post-build helper。
 - `luasf_copy_runtime_dlls(target)`：`luasf_copy_runtime_files(target)` 的兼容别名。
 
 生成的 `.d.lua` 是全局声明文件，以 `---@meta` 开头；EmmyLua 可从独立 stub 库目录中暴露其中的 `sf` API。
+
+`callback_codecs.json` 通过语义 C++ alias 或精确的函数参数使用点描述 callback 转换。消费方应读取这份生成 manifest，而不是匹配展开后的 `std::function` 签名，并可用相邻的 `sfml_api.json` 快照严格校验 canonical type。特别是，交错 float 音频 codec 只由 `sf::SoundSource::EffectProcessor` 选择；具有相同 canonical 签名的无关 alias 不会进入该协议。
+
+### 音效回调契约
+
+`sf.SoundSource.EffectProcessor` 暴露为严格的五参数、无返回值回调：
+
+```lua
+fun(
+    inputFrames: sf.ReadOnlyFloatBufferView|nil,
+    inputFrameCount: sf.UIntRef,
+    outputFrames: sf.WriteOnlyFloatBufferView,
+    outputFrameCount: sf.UIntRef,
+    frameChannelCount: integer
+)
+```
+
+Buffer 使用从 1 开始的 flat interleaved sample 索引；`#view` 和 `view:size()` 的单位是 sample。`UIntRef.value` 可写，`UIntRef.capacity` 只读，两者单位均为 frame。流结束时 input 为 `nil`，effect 仍可输出缓存的尾音；回调返回值会被忽略。
+
+View 与 ref 直接借用 SFML 原生 buffer，并在回调返回时永久失效。写 input、读 output、非法索引或 count、访问过期对象都会报错。音频线程只尝试进入 Lua state，不会等待：锁竞争或 state 关闭时，本 block 直接旁路。Lua 或契约错误会锁存共享 processor context，之后其所有副本均旁路；逻辑线程可通过 `LuaSF_take_deferred_callback_error` 仅取出一次固定容量的延迟错误。
 
 ## 运行时说明
 

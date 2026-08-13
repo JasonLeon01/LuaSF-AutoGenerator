@@ -10,10 +10,10 @@ from typing import Any
 
 try:
     from .replace_model import (
-        AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
-        AUDIO_EFFECT_PROCESSOR_SIGNATURE,
         BINDING_TEMPLATES,
         BYTE_TYPES,
+        CALLBACK_CODEC_REGISTRY,
+        CallbackCodec,
         ConfiguredBinding,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
@@ -31,7 +31,6 @@ try:
         OUTPUT_REF_NAMES,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
-        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
@@ -41,6 +40,7 @@ try:
         TYPE_DECL_KINDS,
         TypeRef,
         clean_cpp_type,
+        get_callback_codec,
         get_lifecycle,
         is_anonymous_cpp_name,
         packet_io_info,
@@ -59,10 +59,10 @@ try:
     )
 except ImportError:
     from replace_model import (
-        AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
-        AUDIO_EFFECT_PROCESSOR_SIGNATURE,
         BINDING_TEMPLATES,
         BYTE_TYPES,
+        CALLBACK_CODEC_REGISTRY,
+        CallbackCodec,
         ConfiguredBinding,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
@@ -80,7 +80,6 @@ except ImportError:
         OUTPUT_REF_NAMES,
         SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
-        SPECIAL_CALLBACK_LUA_TYPES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
@@ -90,6 +89,7 @@ except ImportError:
         TYPE_DECL_KINDS,
         TypeRef,
         clean_cpp_type,
+        get_callback_codec,
         get_lifecycle,
         is_anonymous_cpp_name,
         packet_io_info,
@@ -313,13 +313,137 @@ def is_std_function(type_ref: TypeRef) -> bool:
     return std_function_signature(type_ref) is not None
 
 
-def std_function_lua_type(type_ref: TypeRef) -> str:
+def resolve_callback_codec(
+    type_ref: TypeRef,
+    qualified_function: str = "",
+    parameter_name: str = "",
+) -> CallbackCodec | None:
+    if not is_std_function(type_ref):
+        return None
+
+    return get_callback_codec(
+        type_ref.cpp,
+        qualified_function,
+        parameter_name,
+        std_function_signature(type_ref) or "",
+    )
+
+
+def callback_codec_for_alias(qualified_alias: str) -> CallbackCodec | None:
+    qualified_alias = clean_cpp_type(qualified_alias)
+    matches = [
+        callback_codec
+        for callback_codec in CALLBACK_CODEC_REGISTRY
+        if clean_cpp_type(callback_codec.native_callable) == qualified_alias
+    ]
+    if len(matches) > 1:
+        raise ValueError(f"ambiguous callback codec alias selector: {qualified_alias}")
+    return matches[0] if matches else None
+
+
+def canonical_std_function_type(type_ref: TypeRef) -> str:
+    signature = std_function_signature(type_ref)
+    return clean_cpp_type(f"std::function<{signature}>") if signature else ""
+
+
+def validate_callback_codecs_against_api(api: dict[str, Any]) -> None:
+    declarations = list(
+        declaration
+        for file_item in api.get("files", [])
+        for declaration in walk_declarations(file_item.get("declarations", []))
+    )
+    declarations_by_name: dict[str, list[dict[str, Any]]] = {}
+    for declaration in declarations:
+        qualified_name = clean_cpp_type(declaration.get("qualified_name") or "")
+        if qualified_name:
+            declarations_by_name.setdefault(qualified_name, []).append(declaration)
+
+    for callback_codec in CALLBACK_CODEC_REGISTRY:
+        selector = callback_codec.selector
+        expected_canonical = clean_cpp_type(callback_codec.canonical_type)
+
+        native_callable = clean_cpp_type(callback_codec.native_callable)
+        if native_callable.startswith("sf::"):
+            native_items = [
+                item
+                for item in declarations_by_name.get(native_callable, [])
+                if item.get("kind") in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}
+            ]
+            if len(native_items) != 1:
+                raise ValueError(
+                    f"callback codec {callback_codec.name!r} expected exactly one NativeCallable alias "
+                    f"{native_callable!r}, found {len(native_items)}"
+                )
+            native_canonical = canonical_std_function_type(TypeRef.from_json(native_items[0].get("type")))
+            if native_canonical != expected_canonical:
+                raise ValueError(
+                    f"callback codec {callback_codec.name!r} NativeCallable canonical type mismatch for "
+                    f"{native_callable}: expected {expected_canonical}, got {native_canonical}"
+                )
+
+        if selector.semantic_alias:
+            alias_items = [
+                item
+                for item in declarations_by_name.get(clean_cpp_type(selector.semantic_alias), [])
+                if item.get("kind") in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}
+            ]
+            if len(alias_items) != 1:
+                raise ValueError(
+                    f"callback codec {callback_codec.name!r} expected exactly one extracted alias "
+                    f"{selector.semantic_alias!r}, found {len(alias_items)}"
+                )
+            actual_canonical = canonical_std_function_type(TypeRef.from_json(alias_items[0].get("type")))
+            if actual_canonical != expected_canonical:
+                raise ValueError(
+                    f"callback codec {callback_codec.name!r} canonical type mismatch for "
+                    f"{selector.semantic_alias}: expected {expected_canonical}, got {actual_canonical}"
+                )
+
+        if selector.qualified_function:
+            function_items = declarations_by_name.get(selector.qualified_function, [])
+            matching_parameters: list[TypeRef] = []
+            for function_item in function_items:
+                for parameter in function_item.get("parameters", []):
+                    if parameter.get("name") == selector.parameter_name:
+                        type_ref = TypeRef.from_json(parameter.get("type"))
+                        if (
+                            not selector.callable_signature
+                            or std_function_signature(type_ref) == clean_cpp_type(selector.callable_signature)
+                        ):
+                            matching_parameters.append(type_ref)
+            if len(matching_parameters) != 1:
+                raise ValueError(
+                    f"callback codec {callback_codec.name!r} expected exactly one extracted parameter "
+                    f"{selector.qualified_function}.{selector.parameter_name}, found {len(matching_parameters)}"
+                )
+            actual_canonical = canonical_std_function_type(matching_parameters[0])
+            if actual_canonical != expected_canonical:
+                raise ValueError(
+                    f"callback codec {callback_codec.name!r} canonical type mismatch for "
+                    f"{selector.qualified_function}.{selector.parameter_name}: "
+                    f"expected {expected_canonical}, got {actual_canonical}"
+                )
+
+
+def callback_from_object_expr(callback_codec: CallbackCodec, name: str, label: str) -> str:
+    return (
+        f"lua_sf::callback::from_object<{callback_codec.native_callable}, "
+        f"{callback_codec.codec}>({name}, {cpp_string_literal(label)})"
+    )
+
+
+def std_function_lua_type(
+    type_ref: TypeRef,
+    qualified_function: str = "",
+    parameter_name: str = "",
+) -> str:
     signature = std_function_signature(type_ref)
     if not signature:
         return "fun(...): any"
-    special = SPECIAL_CALLBACK_LUA_TYPES.get(signature)
-    if special:
-        return special
+    callback_codec = resolve_callback_codec(type_ref, qualified_function, parameter_name)
+    if callback_codec:
+        suffix = "|nil" if callback_codec.allow_nil else ""
+        return callback_codec.lua_type + suffix
 
     match = re.fullmatch(r"(.+?)\((.*)\)", signature)
     if not match:
@@ -433,7 +557,12 @@ def lua_param_type(type_ref: TypeRef) -> str:
     return cpp
 
 
-def from_lua_expr(type_ref: TypeRef, name: str) -> tuple[list[str], str]:
+def from_lua_expr(
+    type_ref: TypeRef,
+    name: str,
+    qualified_function: str = "",
+    parameter_name: str = "",
+) -> tuple[list[str], str]:
     cpp = type_ref.cpp
     base = remove_cvref(cpp)
     if is_window_handle(type_ref):
@@ -442,6 +571,10 @@ def from_lua_expr(type_ref: TypeRef, name: str) -> tuple[list[str], str]:
         return [], f"{name}.value()"
     signature = std_function_signature(type_ref)
     if signature:
+        callback_codec = resolve_callback_codec(type_ref, qualified_function, parameter_name)
+        if callback_codec:
+            label = f"{qualified_function}.{parameter_name}".strip(".")
+            return [], callback_from_object_expr(callback_codec, name, label)
         return [], f"lua_sf::function_from_object<{signature}>({name})"
     if is_sf_string(cpp):
         return [], f"lua_sf::to_sf_string({name})"
@@ -938,15 +1071,21 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
             continue
 
         lua_type = lua_param_type(type_ref)
-        prelude, expr = from_lua_expr(type_ref, name)
+        parameter_name = param.get("name") or f"arg{index}"
+        prelude, expr = from_lua_expr(type_ref, name, function_name, parameter_name)
         plan.lua_params.append(f"{lua_type} {name}")
         plan.prelude.extend(prelude)
         plan.call_args.append(expr)
+        callback_codec = resolve_callback_codec(type_ref, function_name, parameter_name)
         canonical_stub_type = cpp_type_to_lua_type(type_ref.canonical_cpp)
-        if canonical_stub_type != "any":
+        if callback_codec:
+            plan.stub_param_types[sanitize_lua_identifier(name)] = std_function_lua_type(
+                type_ref,
+                function_name,
+                parameter_name,
+            )
+        elif canonical_stub_type != "any":
             plan.stub_param_types[sanitize_lua_identifier(name)] = canonical_stub_type
-        elif is_std_function(type_ref):
-            plan.stub_param_types[sanitize_lua_identifier(name)] = std_function_lua_type(type_ref)
         plan.signature_key += (lua_type,)
 
     return plan
@@ -1016,16 +1155,24 @@ def make_lambda(
         call_target = call_name
     call_expr = f"{call_target}({', '.join(plan.call_args)})"
 
-    callback_signature = (
-        std_function_signature(TypeRef.from_json(params[0].get("type")))
-        if owner_type is None
-        and len(params) == 1
-        and call_name.rsplit("::", 1)[-1].startswith("set")
-        and return_type.cpp == "void"
-        else None
-    )
-    if callback_signature:
+    callback_codec = None
+    if len(params) == 1:
+        callback_codec = resolve_callback_codec(
+            TypeRef.from_json(params[0].get("type")),
+            item.get("qualified_name") or call_name,
+            params[0].get("name") or "callback",
+        )
+    if callback_codec and callback_codec.clear_setter_on_quiesce:
         callback_name = sanitize_identifier(params[0].get("name") or "callback")
+        callback_label = (
+            f"{item.get('qualified_name') or call_name}."
+            f"{params[0].get('name') or 'callback'}"
+        )
+        native_callback_expr = callback_from_object_expr(
+            callback_codec,
+            callback_name,
+            callback_label,
+        )
         return (
             "\n".join(
                 [
@@ -1037,7 +1184,7 @@ def make_lambda(
                     "        lua_sf::detail::unregisterStateQuiesceCallback(state, &callbackOwner);",
                     "        return;",
                     "    }",
-                    f"    auto nativeCallback = lua_sf::function_from_object_at_native_thread_boundary<{callback_signature}>({callback_name});",
+                    f"    auto nativeCallback = {native_callback_expr};",
                     "    lua_sf::detail::registerStateQuiesceCallback(",
                     "        state, &callbackOwner,",
                     f"        []() noexcept {{ {call_target}({{}}); }});",
@@ -1282,6 +1429,7 @@ class Sol2Generator:
         self.src_root = output_root / "src"
         self.skipped: list[str] = []
         set_public_type_aliases(api)
+        validate_callback_codecs_against_api(api)
         self.template_map = self._build_template_map()
         self._validate_template_profiles()
         self.specializations, self.alias_specializations = self._build_template_specializations()
@@ -2113,10 +2261,16 @@ class Sol2Generator:
             return []
         if is_std_function(type_ref):
             alias_lua = f"{owner_lua_path}.{name}"
+            callback_codec = callback_codec_for_alias(qualified_name)
+            alias_signature = (
+                callback_codec.lua_signature
+                if callback_codec
+                else std_function_lua_type(type_ref)
+            )
             return [
                 *stub_doc_lines(item),
                 f'    LUASF_STUB_ALIAS({cpp_string_literal(alias_lua)}, '
-                f'{cpp_string_literal(std_function_lua_type(type_ref))});',
+                f'{cpp_string_literal(alias_signature)});',
             ]
         if not target_cpp.startswith("sf::"):
             if "::" in target_cpp:
