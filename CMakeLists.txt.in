@@ -23,7 +23,7 @@ set(LUASF_EXTENSION_ARCHIVE_DIR "${{LUASF_BINARY_ROOT}}/lib/$<CONFIG>/extension"
 
 option(LUASF_BUILD_SHARED_SFML "Build SFML as shared libraries for LuaSF" ON)
 option(LUASF_GENERATE_LUA_STUB "Generate Lua language-server stub from the built LuaSF module" ON)
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(LUASF_BUILD_SHARED_SFML OFF CACHE BOOL "Build SFML as shared libraries for LuaSF" FORCE)
     set(LUASF_LIBRARY_TYPE STATIC)
     set(LUASF_EXTENSION_LIBRARY_TYPE STATIC)
