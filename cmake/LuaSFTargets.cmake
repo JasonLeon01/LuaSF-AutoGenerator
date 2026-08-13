@@ -6,6 +6,13 @@ set(LUASF_INCLUDE_DIR "${LUASF_RESULT_ROOT}/include" CACHE PATH "LuaSF include d
 set(LUASF_RUNTIME_DIR "${LUASF_RESULT_ROOT}/bin" CACHE PATH "LuaSF runtime library directory" FORCE)
 set(LUASF_LIBRARY_DIR "${LUASF_RESULT_ROOT}/lib" CACHE PATH "LuaSF import/static library directory" FORCE)
 set(LUASF_STUB_FILE "${LUASF_RESULT_ROOT}/stub/LuaSF.d.lua" CACHE FILEPATH "LuaSF Lua language-server stub" FORCE)
+get_filename_component(_LUASF_CALLBACK_CODECS_FILE "${LUASF_RESULT_ROOT}/callback_codecs.json" ABSOLUTE)
+set(LUASF_CALLBACK_CODECS_FILE "${_LUASF_CALLBACK_CODECS_FILE}" CACHE FILEPATH "LuaSF callback codec manifest" FORCE)
+unset(_LUASF_CALLBACK_CODECS_FILE)
+
+if(NOT EXISTS "${LUASF_CALLBACK_CODECS_FILE}")
+    message(FATAL_ERROR "LuaSF callback codec manifest was not found: ${LUASF_CALLBACK_CODECS_FILE}")
+endif()
 
 if(WIN32)
     set(LUASF_MODULE_FILE "${LUASF_RUNTIME_DIR}/LuaSF.dll")

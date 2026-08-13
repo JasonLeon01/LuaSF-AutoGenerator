@@ -59,6 +59,8 @@ if [ ! -d "$EMBEDDED_LIB_DIR" ]; then
 fi
 
 STUB_FILE="$BUILD_DIR/LuaSF.d.lua"
+CALLBACK_CODECS_FILE="$OUTPUT_DIR/callback_codecs.json"
+SFML_API_FILE="$OUTPUT_DIR/sfml_api.json"
 LUAC_FILE=$(find "$BUILD_DIR/tools" -maxdepth 2 \( -type f -o -type l \) \( -name 'luac' -o -name 'luac.exe' \) 2>/dev/null | head -n 1 || true)
 
 find_embedded_module_file() {
@@ -85,6 +87,18 @@ fi
 
 if [ ! -f "$STUB_FILE" ]; then
     echo "Missing Lua stub $STUB_FILE." >&2
+    echo "Run sh build.sh $CONFIG first." >&2
+    exit 1
+fi
+
+if [ ! -f "$CALLBACK_CODECS_FILE" ]; then
+    echo "Missing callback codec manifest $CALLBACK_CODECS_FILE." >&2
+    echo "Run sh build.sh $CONFIG first." >&2
+    exit 1
+fi
+
+if [ ! -f "$SFML_API_FILE" ]; then
+    echo "Missing SFML API snapshot $SFML_API_FILE." >&2
     echo "Run sh build.sh $CONFIG first." >&2
     exit 1
 fi
@@ -178,6 +192,8 @@ fi
 
 cp "$STUB_FILE" "$EMBEDDED_RESULT_DIR/stub/"
 cp "$STUB_FILE" "$EXTENSION_RESULT_DIR/stub/"
+cp "$CALLBACK_CODECS_FILE" "$EMBEDDED_RESULT_DIR/callback_codecs.json"
+cp "$SFML_API_FILE" "$EMBEDDED_RESULT_DIR/sfml_api.json"
 cp "$LUAC_FILE" "$EMBEDDED_RESULT_DIR/tools/"
 
 copy_tree_contents "$OUTPUT_DIR/include" "$EMBEDDED_RESULT_DIR/include"
@@ -224,6 +240,10 @@ cp "cmake/result_README.md" "$EMBEDDED_RESULT_DIR/README.md"
     echo
     echo "stub:"
     ls -1 "$EMBEDDED_RESULT_DIR/stub"
+    echo
+    echo "callback codecs:"
+    echo "- callback_codecs.json"
+    echo "- sfml_api.json"
     echo
     echo "tools:"
     ls -1 "$EMBEDDED_RESULT_DIR/tools"
@@ -285,6 +305,8 @@ echo "Result folder: $RESULT_DIR"
 echo "Embedded runtime libraries: $EMBEDDED_RESULT_DIR/bin"
 echo "Lua extension libraries: $EXTENSION_RESULT_DIR/bin"
 echo "Embedded stub: $EMBEDDED_RESULT_DIR/stub/LuaSF.d.lua"
+echo "Callback codecs: $EMBEDDED_RESULT_DIR/callback_codecs.json"
+echo "SFML API snapshot: $EMBEDDED_RESULT_DIR/sfml_api.json"
 echo "Extension stub: $EXTENSION_RESULT_DIR/stub/LuaSF.d.lua"
 echo "Headers: $EMBEDDED_RESULT_DIR/include"
 echo "Host luac: $EMBEDDED_RESULT_DIR/tools/$(basename "$LUAC_FILE")"
