@@ -27,6 +27,21 @@ if [ ! -d "$EXTENSION_RESULT_DIR" ]; then
     exit 1
 fi
 
+if [ ! -f "$OUTPUT_DIR/callback_codecs.json" ]; then
+    echo "Missing output/callback_codecs.json. Run sh build.sh first." >&2
+    exit 1
+fi
+
+if [ ! -f "$EMBEDDED_RESULT_DIR/callback_codecs.json" ]; then
+    echo "Missing embedded callback codec manifest. Run sh collect_result.sh first." >&2
+    exit 1
+fi
+
+if [ ! -f "$EMBEDDED_RESULT_DIR/sfml_api.json" ]; then
+    echo "Missing embedded SFML API snapshot. Run sh collect_result.sh first." >&2
+    exit 1
+fi
+
 cmake_cache_value() {
     key=$1
     if [ ! -d "$BUILD_DIR" ]; then

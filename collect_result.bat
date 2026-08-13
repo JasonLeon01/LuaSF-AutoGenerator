@@ -44,6 +44,8 @@ set "LUAC_FILE=%BUILD_DIR%\tools\%CONFIG%\luac.exe"
 if not exist "%LUAC_FILE%" set "LUAC_FILE=%BUILD_DIR%\tools\luac.exe"
 
 set "STUB_FILE=%BUILD_DIR%\LuaSF.d.lua"
+set "CALLBACK_CODECS_FILE=%OUTPUT_DIR%\callback_codecs.json"
+set "SFML_API_FILE=%OUTPUT_DIR%\sfml_api.json"
 
 if not exist "%EMBEDDED_BIN_DIR%\LuaSF.dll" (
     echo Missing embedded LuaSF.dll under "%EMBEDDED_BIN_DIR%".
@@ -59,6 +61,18 @@ if not exist "%EXTENSION_BIN_DIR%\LuaSF.dll" (
 
 if not exist "%STUB_FILE%" (
     echo Missing Lua stub "%STUB_FILE%".
+    echo Run build.bat %CONFIG% first.
+    exit /b 1
+)
+
+if not exist "%CALLBACK_CODECS_FILE%" (
+    echo Missing callback codec manifest "%CALLBACK_CODECS_FILE%".
+    echo Run build.bat %CONFIG% first.
+    exit /b 1
+)
+
+if not exist "%SFML_API_FILE%" (
+    echo Missing SFML API snapshot "%SFML_API_FILE%".
     echo Run build.bat %CONFIG% first.
     exit /b 1
 )
@@ -107,6 +121,16 @@ if errorlevel 1 (
 copy /y "%STUB_FILE%" "%EXTENSION_RESULT_DIR%\stub\" >nul
 if errorlevel 1 (
     echo Failed to copy Lua extension stub.
+    exit /b 1
+)
+copy /y "%CALLBACK_CODECS_FILE%" "%EMBEDDED_RESULT_DIR%\callback_codecs.json" >nul
+if errorlevel 1 (
+    echo Failed to copy callback codec manifest.
+    exit /b 1
+)
+copy /y "%SFML_API_FILE%" "%EMBEDDED_RESULT_DIR%\sfml_api.json" >nul
+if errorlevel 1 (
+    echo Failed to copy SFML API snapshot.
     exit /b 1
 )
 copy /y "%LUAC_FILE%" "%EMBEDDED_RESULT_DIR%\tools\luac.exe" >nul
@@ -197,6 +221,10 @@ if errorlevel 1 (
     echo stub:
     dir /b "%EMBEDDED_RESULT_DIR%\stub"
     echo.
+    echo callback codecs:
+    echo - callback_codecs.json
+    echo - sfml_api.json
+    echo.
     echo tools:
     dir /b "%EMBEDDED_RESULT_DIR%\tools"
     echo.
@@ -258,6 +286,8 @@ echo Result folder: %RESULT_DIR%
 echo Embedded DLLs: %EMBEDDED_RESULT_DIR%\bin
 echo Lua extension DLLs: %EXTENSION_RESULT_DIR%\bin
 echo Embedded stub: %EMBEDDED_RESULT_DIR%\stub\LuaSF.d.lua
+echo Callback codecs: %EMBEDDED_RESULT_DIR%\callback_codecs.json
+echo SFML API snapshot: %EMBEDDED_RESULT_DIR%\sfml_api.json
 echo Extension stub: %EXTENSION_RESULT_DIR%\stub\LuaSF.d.lua
 echo Headers: %EMBEDDED_RESULT_DIR%\include
 echo Host luac: %EMBEDDED_RESULT_DIR%\tools\luac.exe

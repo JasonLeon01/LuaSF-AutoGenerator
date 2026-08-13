@@ -17,6 +17,7 @@ try:
         MODULE_ORDER,
         TEMPLATE_SPECIALIZATION_OVERRIDES,
         TYPE_DECL_KINDS,
+        callback_codec_manifest,
     )
 except ImportError:
     from replace_model import (
@@ -26,6 +27,7 @@ except ImportError:
         MODULE_ORDER,
         TEMPLATE_SPECIALIZATION_OVERRIDES,
         TYPE_DECL_KINDS,
+        callback_codec_manifest,
     )
 
 
@@ -61,6 +63,14 @@ def rel(path: Path, root: Path) -> str:
 def copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def write_callback_codec_manifest(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(callback_codec_manifest(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def copy_support_sources(project_root: Path, output_root: Path) -> None:
@@ -730,6 +740,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cmake-output", default="output/CMakeLists.txt")
     parser.add_argument("--source-output", "--main-output", default="output/LuaSF.cpp", dest="source_output")
     parser.add_argument("--header-output", default="output/include/LuaSF.hpp")
+    parser.add_argument("--callback-codecs-output", default="output/callback_codecs.json")
     parser.add_argument("--project-name", default="LuaSF")
     parser.add_argument("--target-name", default="LuaSF")
     parser.add_argument("--module-name", default="LuaSF")
@@ -746,11 +757,13 @@ def main() -> int:
     api_path = (project_root / args.api_json).resolve()
     output_root = (project_root / args.output_root).resolve()
     cache_path = (project_root / args.cache).resolve()
+    callback_codecs_output = (project_root / args.callback_codecs_output).resolve()
 
     api = load_api(api_path)
     copy_support_sources(project_root, output_root)
     if args.copy_dependencies:
         copy_dependencies(project_root, output_root)
+    write_callback_codec_manifest(callback_codecs_output)
     entries = discover_entries(api, project_root, output_root)
     order, used_cache = sorted_order(project_root, api_path, cache_path, api, entries, args.force_sort)
     render_outputs(
@@ -772,7 +785,8 @@ def main() -> int:
     cache_note = "using cached order" if used_cache else "after topological sort"
     dependency_note = " with copied dependencies" if args.copy_dependencies else ""
     print(
-        f"Generated output/CMakeLists.txt, output/LuaSF.cpp, and output/include/LuaSF.hpp "
+        f"Generated output/CMakeLists.txt, output/LuaSF.cpp, output/include/LuaSF.hpp, "
+        f"and output/callback_codecs.json "
         f"for {len(order)} binding units ({cache_note}){dependency_note}."
     )
     return 0

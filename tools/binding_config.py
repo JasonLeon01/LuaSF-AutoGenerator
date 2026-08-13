@@ -185,6 +185,52 @@ class TemplateSpecializationOverride:
     dependencies: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class CallbackSelector:
+    """Semantic selector for one callback conversion policy."""
+
+    semantic_alias: str = ""
+    qualified_function: str = ""
+    parameter_name: str = ""
+    callable_signature: str = ""
+
+
+@dataclass(frozen=True)
+class CallbackParameter:
+    name: str
+    role: str
+    access: str
+    nullable: bool = False
+    unit: str = ""
+
+
+@dataclass(frozen=True)
+class CallbackReturn:
+    name: str
+    role: str
+    nullable: bool = False
+    unit: str = ""
+
+
+@dataclass(frozen=True)
+class CallbackCodec:
+    """Declarative Lua callback conversion and documentation policy."""
+
+    name: str
+    selector: CallbackSelector
+    canonical_type: str
+    native_callable: str
+    codec: str
+    lua_type: str
+    lua_signature: str
+    allow_nil: bool = False
+    thread_policy: str = "blockingEnter"
+    directions: tuple[str, ...] = ("fromLua",)
+    parameters: tuple[CallbackParameter, ...] = ()
+    returns: tuple[CallbackReturn, ...] = ()
+    clear_setter_on_quiesce: bool = False
+
+
 # --- Lua name helpers ---
 
 
@@ -1091,28 +1137,119 @@ SPECIAL_POINTER_RETURNS: dict[str, tuple[str, str]] = {
     "sf::SoundBuffer::getSamples": ("std::int16_t", "self.getSampleCount()"),
 }
 
-AUDIO_EFFECT_PROCESSOR_SIGNATURE: str = (
-    "void(const float*, unsigned int&, float*, unsigned int&, unsigned int)"
-)
+CALLBACK_CODEC_SCHEMA_VERSION: int = 1
 
-AUDIO_EFFECT_PROCESSOR_LUA_TYPE: str = (
-    "fun(inputFrames: number[][], inputFrameCount: integer, "
-    "outputFrames: number[][], outputFrameCount: integer, frameChannelCount: integer): integer|table|nil"
+CALLBACK_CODEC_REGISTRY: tuple[CallbackCodec, ...] = (
+    CallbackCodec(
+        name="interleavedFloatTransform",
+        selector=CallbackSelector(semantic_alias="sf::SoundSource::EffectProcessor"),
+        canonical_type="std::function<void(const float*, unsigned int&, float*, unsigned int&, unsigned int)>",
+        native_callable="sf::SoundSource::EffectProcessor",
+        codec="lua_sf::callback::InterleavedFloatTransformCodec",
+        lua_type="sf.SoundSource.EffectProcessor",
+        lua_signature=(
+            "fun(inputFrames: sf.ReadOnlyFloatBufferView|nil, inputFrameCount: sf.UIntRef, "
+            "outputFrames: sf.WriteOnlyFloatBufferView, outputFrameCount: sf.UIntRef, "
+            "frameChannelCount: integer)"
+        ),
+        allow_nil=True,
+        thread_policy="nativeTryEnter",
+        directions=("fromLua", "toLua"),
+        parameters=(
+            CallbackParameter("inputFrames", "inputBuffer", "read", nullable=True, unit="sample"),
+            CallbackParameter("inputFrameCount", "inputCount", "readWrite", unit="frame"),
+            CallbackParameter("outputFrames", "outputBuffer", "write", unit="sample"),
+            CallbackParameter("outputFrameCount", "outputCount", "readWrite", unit="frame"),
+            CallbackParameter("frameChannelCount", "channelCount", "read", unit="channel"),
+        ),
+        returns=(),
+    ),
+    CallbackCodec(
+        name="glyphPreProcessor",
+        selector=CallbackSelector(semantic_alias="sf::Text::GlyphPreProcessor"),
+        canonical_type=(
+            "std::function<void(const sf::Text::ShapedGlyph&, std::uint32_t&, "
+            "sf::Color&, sf::Color&, float&)>"
+        ),
+        native_callable="sf::Text::GlyphPreProcessor",
+        codec="lua_sf::callback::GlyphPreProcessorCodec",
+        lua_type="sf.Text.GlyphPreProcessor",
+        lua_signature=(
+            "fun(shapedGlyph: sf.Text.ShapedGlyph, style: integer, fillColor: sf.Color, "
+            "outlineColor: sf.Color, outlineThickness: number): "
+            "{style: integer?, fillColor: sf.Color?, outlineColor: sf.Color?, outlineThickness: number?}|nil"
+        ),
+        allow_nil=True,
+        parameters=(
+            CallbackParameter("shapedGlyph", "value", "read"),
+            CallbackParameter("style", "value", "readWrite"),
+            CallbackParameter("fillColor", "value", "readWrite"),
+            CallbackParameter("outlineColor", "value", "readWrite"),
+            CallbackParameter("outlineThickness", "value", "readWrite"),
+        ),
+        returns=(CallbackReturn("updates", "inoutPatch", nullable=True),),
+    ),
+    CallbackCodec(
+        name="sftpDownloadBuffer",
+        selector=CallbackSelector(
+            qualified_function="sf::Sftp::download",
+            parameter_name="callback",
+            callable_signature="bool(const void*, std::size_t)",
+        ),
+        canonical_type="std::function<bool(const void*, std::size_t)>",
+        native_callable="std::function<bool(const void*, std::size_t)>",
+        codec="lua_sf::callback::SftpDownloadBufferCodec",
+        lua_type="fun(data: string, size: integer): boolean",
+        lua_signature="fun(data: string, size: integer): boolean",
+        parameters=(
+            CallbackParameter("data", "inputBuffer", "read", unit="byte"),
+            CallbackParameter("size", "inputCount", "read", unit="byte"),
+        ),
+        returns=(CallbackReturn("keepGoing", "continueFlag"),),
+    ),
+    CallbackCodec(
+        name="sftpUploadBuffer",
+        selector=CallbackSelector(
+            qualified_function="sf::Sftp::upload",
+            parameter_name="callback",
+            callable_signature="bool(void*, std::size_t&)",
+        ),
+        canonical_type="std::function<bool(void*, std::size_t&)>",
+        native_callable="std::function<bool(void*, std::size_t&)>",
+        codec="lua_sf::callback::SftpUploadBufferCodec",
+        lua_type=(
+            "fun(capacity: integer): string|integer[]|"
+            "{keepGoing: boolean?, data: string|integer[]?}|boolean|nil"
+        ),
+        lua_signature=(
+            "fun(capacity: integer): string|integer[]|"
+            "{keepGoing: boolean?, data: string|integer[]?}|boolean|nil"
+        ),
+        parameters=(
+            CallbackParameter("capacity", "outputCapacity", "read", unit="byte"),
+        ),
+        returns=(CallbackReturn("result", "bufferFillResult", nullable=True, unit="byte"),),
+    ),
+    CallbackCodec(
+        name="playbackDeviceNotification",
+        selector=CallbackSelector(
+            semantic_alias="sf::PlaybackDevice::NotificationCallback",
+            qualified_function="sf::PlaybackDevice::setNotificationCallback",
+            parameter_name="callback",
+            callable_signature="void(sf::PlaybackDevice::Notification)",
+        ),
+        canonical_type="std::function<void(sf::PlaybackDevice::Notification)>",
+        native_callable="sf::PlaybackDevice::NotificationCallback",
+        codec="lua_sf::callback::NativeThreadBoundaryCodec",
+        lua_type="sf.PlaybackDevice.NotificationCallback",
+        lua_signature="fun(notification: sf.PlaybackDevice.Notification)",
+        allow_nil=True,
+        thread_policy="nativeThreadBoundary",
+        parameters=(CallbackParameter("notification", "value", "read"),),
+        returns=(),
+        clear_setter_on_quiesce=True,
+    ),
 )
-
-SPECIAL_CALLBACK_LUA_TYPES: dict[str, str] = {
-    AUDIO_EFFECT_PROCESSOR_SIGNATURE: AUDIO_EFFECT_PROCESSOR_LUA_TYPE,
-    "void(const sf::Text::ShapedGlyph&, std::uint32_t&, sf::Color&, sf::Color&, float&)": (
-        "fun(shapedGlyph: sf.Text.ShapedGlyph, style: integer, fillColor: sf.Color, "
-        "outlineColor: sf.Color, outlineThickness: number): "
-        "{style: integer?, fillColor: sf.Color?, outlineColor: sf.Color?, outlineThickness: number?}|nil"
-    ),
-    "bool(const void*, std::size_t)": "fun(data: string, size: integer): boolean",
-    "bool(void*, std::size_t&)": (
-        "fun(capacity: integer): string|integer[]|"
-        "{keepGoing: boolean?, data: string|integer[]?}|boolean|nil"
-    ),
-}
 
 # TYPE_DECL_KINDS (used by both generate_sol2_bindings and generate_build_files;
 # includes CLASS_TEMPLATE for the build-file scanner)

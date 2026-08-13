@@ -4,6 +4,12 @@ project("{project_name}" LANGUAGES C CXX)
 
 set(LUASF_ROOT "${{CMAKE_CURRENT_LIST_DIR}}")
 set(LUASF_BINARY_ROOT "${{CMAKE_CURRENT_BINARY_DIR}}")
+get_filename_component(_LUASF_CALLBACK_CODECS_FILE "${{LUASF_ROOT}}/callback_codecs.json" ABSOLUTE)
+set(LUASF_CALLBACK_CODECS_FILE "${{_LUASF_CALLBACK_CODECS_FILE}}" CACHE FILEPATH "LuaSF callback codec manifest" FORCE)
+unset(_LUASF_CALLBACK_CODECS_FILE)
+if(NOT EXISTS "${{LUASF_CALLBACK_CODECS_FILE}}")
+    message(FATAL_ERROR "LuaSF callback codec manifest was not found: ${{LUASF_CALLBACK_CODECS_FILE}}")
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
 set(LUASF_RELEASE_LTO ON)
@@ -214,6 +220,7 @@ function(luasf_configure_binding_target target_name output_dir archive_dir)
 
     target_compile_definitions("${{target_name}}" PRIVATE
         $<$<CONFIG:Debug>:SOL_ALL_SAFETIES_ON=1>
+        SOL_PRINT_ERRORS=0
         SOL_SAFE_NUMERICS=1
         SOL_USE_INTEROP=1
         SOL_DEFAULT_AUTOMAGICAL_USERTYPES=0

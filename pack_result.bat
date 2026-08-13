@@ -21,6 +21,21 @@ if not exist "%EXTENSION_RESULT_DIR%" (
     exit /b 1
 )
 
+if not exist "%OUTPUT_DIR%\callback_codecs.json" (
+    echo Missing output\callback_codecs.json. Run build.bat first.
+    exit /b 1
+)
+
+if not exist "%EMBEDDED_RESULT_DIR%\callback_codecs.json" (
+    echo Missing embedded callback codec manifest. Run collect_result.bat first.
+    exit /b 1
+)
+
+if not exist "%EMBEDDED_RESULT_DIR%\sfml_api.json" (
+    echo Missing embedded SFML API snapshot. Run collect_result.bat first.
+    exit /b 1
+)
+
 set "PLATFORM_OS="
 set "PLATFORM_ARCH="
 set "PLATFORM_COMPILER="

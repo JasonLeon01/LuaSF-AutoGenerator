@@ -3,6 +3,7 @@
 #include "LuaSF.hpp"
 
 #include <memory>
+#include <string_view>
 
 struct lua_State;
 
@@ -26,6 +27,22 @@ private:
   bool active_{};
 };
 
+class LUASF_API LuaStateTryExecutionScope {
+public:
+  explicit LuaStateTryExecutionScope(lua_State *state) noexcept;
+  ~LuaStateTryExecutionScope();
+
+  LuaStateTryExecutionScope(const LuaStateTryExecutionScope &) = delete;
+  LuaStateTryExecutionScope &
+  operator=(const LuaStateTryExecutionScope &) = delete;
+
+  [[nodiscard]] bool active() const noexcept;
+
+private:
+  lua_State *state_{};
+  bool active_{};
+};
+
 class LUASF_API LuaRegistryReference {
 public:
   LuaRegistryReference() noexcept = default;
@@ -33,6 +50,9 @@ public:
 
   [[nodiscard]] lua_State *state() const noexcept;
   [[nodiscard]] bool push() const;
+  [[nodiscard]] bool pushUnderExecutionScope() const noexcept;
+  void deferCallbackError(std::string_view label,
+                          std::string_view message) const noexcept;
   [[nodiscard]] bool equals(const LuaRegistryReference &other) const;
   explicit operator bool() const noexcept;
 
