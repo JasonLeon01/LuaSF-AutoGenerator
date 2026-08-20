@@ -185,10 +185,16 @@ if [ ! -f "$EXTENSION_RESULT_DIR/bin/$(basename "$EXTENSION_MODULE_FILE")" ]; th
     cp "$EXTENSION_MODULE_FILE" "$EXTENSION_RESULT_DIR/bin/"
 fi
 
-if [ -d "$SCRIPT_DIR/requirements" ]; then
-    find "$SCRIPT_DIR/requirements" -maxdepth 1 -type f -name '*.dll' -exec cp {} "$EMBEDDED_RESULT_DIR/bin"/ \;
-    find "$SCRIPT_DIR/requirements" -maxdepth 1 -type f -name '*.dll' -exec cp {} "$EXTENSION_RESULT_DIR/bin"/ \;
-fi
+# requirements contains Windows MSVC runtime DLLs. Include them only when the
+# collected target is Windows, including builds collected from a POSIX shell.
+case "$EMBEDDED_MODULE_FILE" in
+    *.dll)
+        if [ -d "$SCRIPT_DIR/requirements" ]; then
+            find "$SCRIPT_DIR/requirements" -maxdepth 1 -type f -name '*.dll' -exec cp {} "$EMBEDDED_RESULT_DIR/bin"/ \;
+            find "$SCRIPT_DIR/requirements" -maxdepth 1 -type f -name '*.dll' -exec cp {} "$EXTENSION_RESULT_DIR/bin"/ \;
+        fi
+        ;;
+esac
 
 cp "$STUB_FILE" "$EMBEDDED_RESULT_DIR/stub/"
 cp "$STUB_FILE" "$EXTENSION_RESULT_DIR/stub/"
