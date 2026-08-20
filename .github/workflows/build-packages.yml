@@ -1,0 +1,248 @@
+name: Build tagged packages
+
+run-name: Build LuaSF packages for ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows-vs2022:
+    name: Windows VS2022 x64
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      CMAKE_GENERATOR: Visual Studio 17 2022
+      CMAKE_GENERATOR_PLATFORM: x64
+      REQUESTED_TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Checkout requested tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate tag build scripts
+        shell: pwsh
+        run: |
+          $tagCommit = (git rev-list -n 1 "refs/tags/$env:REQUESTED_TAG").Trim()
+          $headCommit = (git rev-parse HEAD).Trim()
+          if ($tagCommit -ne $headCommit) {
+              throw "HEAD does not match tag '$env:REQUESTED_TAG'."
+          }
+
+          $requiredScripts = @(
+              'init.bat',
+              'build.bat',
+              'collect_result.bat',
+              'pack_result.bat'
+          )
+          $missingScripts = @($requiredScripts | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missingScripts.Count -ne 0) {
+              throw "Tag '$env:REQUESTED_TAG' is missing required scripts: $($missingScripts -join ', ')"
+          }
+
+      - name: Set up Python 3.12 x64
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: Initialize dependencies
+        shell: cmd
+        run: call init.bat
+
+      - name: Build Release packages
+        shell: cmd
+        run: call build.bat Release
+
+      - name: Verify VS2022 generator
+        shell: pwsh
+        run: |
+          $cacheLines = Get-Content -LiteralPath 'output/build/CMakeCache.txt'
+          if ($cacheLines -notcontains 'CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022') {
+              throw 'The output project was not generated with Visual Studio 2022.'
+          }
+          if ($cacheLines -notcontains 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64') {
+              throw 'The output project was not generated for x64.'
+          }
+
+      - name: Collect Release result
+        shell: cmd
+        run: call collect_result.bat Release
+
+      - name: Pack distributable archives
+        shell: cmd
+        run: call pack_result.bat
+
+      - name: Verify Windows packages
+        shell: pwsh
+        run: |
+          $expectedPackages = @(
+              'output/packages/LuaSF-source.zip',
+              'output/packages/LuaSF-embedded-Windows-x64-MSVC.zip',
+              'output/packages/LuaSF-extension-Windows-x64-MSVC.zip'
+          )
+          foreach ($package in $expectedPackages) {
+              if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+                  throw "Missing package: $package"
+              }
+          }
+
+          $requiredRuntimeDlls = @(
+              'LuaSF.dll',
+              'lua.dll',
+              'msvcp140.dll',
+              'msvcp140_atomic_wait.dll',
+              'vcruntime140.dll',
+              'vcruntime140_1.dll'
+          )
+          foreach ($dll in $requiredRuntimeDlls) {
+              $path = Join-Path 'output/result/embedded/bin' $dll
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                  throw "Missing embedded runtime DLL: $path"
+              }
+          }
+          if (-not (Get-ChildItem -LiteralPath 'output/result/embedded/bin' -Filter 'sfml-*.dll' -File)) {
+              throw 'The embedded result does not contain SFML runtime DLLs.'
+          }
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: LuaSF-Windows-VS2022-x64
+          path: output/packages/*.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  macos-apple-silicon:
+    name: macOS Apple Silicon arm64
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CMAKE_OSX_ARCHITECTURES: arm64
+      REQUESTED_TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Checkout requested tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate Apple Silicon runner and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$(uname -m)" != "arm64" ]; then
+              echo "Expected an Apple Silicon arm64 runner." >&2
+              exit 1
+          fi
+
+          tag_commit=$(git rev-list -n 1 "refs/tags/$REQUESTED_TAG")
+          head_commit=$(git rev-parse HEAD)
+          if [ "$tag_commit" != "$head_commit" ]; then
+              echo "HEAD does not match tag '$REQUESTED_TAG'." >&2
+              exit 1
+          fi
+
+          for script in init.sh build.sh collect_result.sh pack_result.sh; do
+              if [ ! -f "$script" ]; then
+                  echo "Tag '$REQUESTED_TAG' is missing required script: $script" >&2
+                  exit 1
+              fi
+          done
+
+          libclang_path="$(brew --prefix llvm@18)/lib/libclang.dylib"
+          if [ ! -f "$libclang_path" ]; then
+              echo "Missing llvm@18 libclang: $libclang_path" >&2
+              exit 1
+          fi
+          echo "LIBCLANG_PATH=$libclang_path" >> "$GITHUB_ENV"
+
+      - name: Set up Python 3.12 arm64
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: arm64
+
+      - name: Initialize dependencies
+        shell: sh
+        run: sh init.sh
+
+      - name: Build Release packages
+        shell: sh
+        run: sh build.sh Release
+
+      - name: Verify arm64 output configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq '^CMAKE_OSX_ARCHITECTURES:[^=]*=arm64$' output/build/CMakeCache.txt
+
+      - name: Collect Release result
+        shell: sh
+        run: sh collect_result.sh Release
+
+      - name: Verify macOS result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          unexpected_dll=$(find output/result -type f -name '*.dll' -print -quit)
+          if [ -n "$unexpected_dll" ]; then
+              echo "Unexpected Windows DLL in macOS result: $unexpected_dll" >&2
+              exit 1
+          fi
+
+          found_binary=0
+          while IFS= read -r binary; do
+              found_binary=1
+              architectures=$(lipo -archs "$binary")
+              if [ "$architectures" != "arm64" ]; then
+                  echo "Expected arm64-only Mach-O binary, got '$architectures': $binary" >&2
+                  exit 1
+              fi
+          done < <(find output/result -type f \( -name '*.dylib' -o -name '*.so' \) -print)
+
+          if [ "$found_binary" -eq 0 ]; then
+              echo 'No macOS dynamic libraries were collected.' >&2
+              exit 1
+          fi
+
+      - name: Pack distributable archives
+        shell: sh
+        run: sh pack_result.sh
+
+      - name: Verify macOS packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in \
+              output/packages/LuaSF-source.tar.gz \
+              output/packages/LuaSF-embedded-macOS-ARM64-clang.tar.gz \
+              output/packages/LuaSF-extension-macOS-ARM64-clang.tar.gz; do
+              if [ ! -f "$package" ]; then
+                  echo "Missing package: $package" >&2
+                  exit 1
+              fi
+          done
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: LuaSF-macOS-AppleSilicon-arm64
+          path: output/packages/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
