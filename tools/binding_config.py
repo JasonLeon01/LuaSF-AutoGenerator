@@ -11,7 +11,7 @@ Sections
 2. TypeConversion      — C++ ↔ Lua type conversion rules
 3. BindingOwnership    — which header/binding unit owns which type
 4. OperatorMapping     — C++ operator → sol meta_function
-5. ShaderUniformArray  — sf::Shader uniform-array dispatch table
+5. MethodOverrides     — exact native method helper descriptors
 6. Binding Templates   — C++ code templates with placeholder substitution
 """
 
@@ -157,6 +157,46 @@ class ConfiguredBinding:
     name: str = ""
     stub_signature: str = ""
     values: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ConfiguredMethodVariant:
+    """One typed Lua entry exposed by a configured native method override."""
+
+    lua_name: str
+    cpp_type: str
+    lua_type: str
+
+
+@dataclass(frozen=True)
+class ConfiguredMethodOverride:
+    """Exact native method replacement rendered as one C++ helper call."""
+
+    qualified_function: str
+    lua_name: str
+    helper: str
+    variant_factory: str
+    native_parameter_types: tuple[str, ...]
+    native_return_type: str
+    variants: tuple[ConfiguredMethodVariant, ...]
+
+
+@dataclass(frozen=True)
+class OutputReferenceParameter:
+    """One native out parameter selected by its index in an exact overload."""
+
+    index: int
+    expected_name: str
+    count_for_array_parameter: int | None = None
+
+
+@dataclass(frozen=True)
+class OutputReferencePolicy:
+    """Output semantics for one exact qualified native overload."""
+
+    qualified_function: str
+    parameter_types: tuple[str, ...]
+    outputs: tuple[OutputReferenceParameter, ...]
 
 
 @dataclass(frozen=True)
@@ -380,6 +420,8 @@ class TypeLifecycle:
     constructor_patterns: tuple[str, ...] = ()
     reset_methods: tuple[str, ...] = ()
     memory_constructor_via_openfrommemory: bool = False
+    memory_open_method: str = ""
+    stream_open_method: str = ""
 
 
 LIFECYCLE_REGISTRY: dict[str, TypeLifecycle] = {}
@@ -396,6 +438,8 @@ _register(TypeLifecycle(
     constructor_patterns=("default", "from_file", "from_memory", "from_stream"),
     reset_methods=("close", "openFromFile", "openFromStream"),
     memory_constructor_via_openfrommemory=True,
+    memory_open_method="openFromMemory",
+    stream_open_method="openFromStream",
 ))
 _register(TypeLifecycle(
     "sf::InputSoundFile",
@@ -403,6 +447,8 @@ _register(TypeLifecycle(
     constructor_patterns=("from_file", "from_memory", "from_stream"),
     reset_methods=("close", "openFromFile", "openFromStream"),
     memory_constructor_via_openfrommemory=True,
+    memory_open_method="openFromMemory",
+    stream_open_method="openFromStream",
 ))
 _register(TypeLifecycle(
     "sf::MemoryInputStream",
@@ -416,14 +462,9 @@ _register(TypeLifecycle(
     constructor_patterns=("from_file", "from_memory", "from_stream"),
     reset_methods=("close", "openFromFile", "openFromStream"),
     memory_constructor_via_openfrommemory=True,
+    memory_open_method="openFromMemory",
+    stream_open_method="openFromStream",
 ))
-
-
-LONG_LIVED_RESOURCE_RESET_METHODS: frozenset[str] = frozenset({
-    "close",
-    "openFromFile",
-    "openFromStream",
-})
 
 
 # ===========================================================================
@@ -857,58 +898,30 @@ OPERATOR_META_FUNCTIONS: dict[str, str] = {
 
 
 # ===========================================================================
-# 5. Shader Uniform Array Dispatch
+# 5. Configured Native Method Overrides
 # ===========================================================================
 
-SHADER_UNIFORM_ARRAY_BINDINGS: tuple[dict[str, str], ...] = (
-    {
-        "method": "setUniformFloatArray",
-        "local": "setUniformFloatArray",
-        "cpp": "float",
-        "lua": "number[]",
-        "param": "scalarArray",
-        "check": "first.get_type() == sol::type::number",
-    },
-    {
-        "method": "setUniformVec2Array",
-        "local": "setUniformVec2Array",
-        "cpp": "sf::Vector2f",
-        "lua": "sf.Vector2f[]",
-        "param": "vectorArray",
-        "check": "first.is<sf::Vector2f>()",
-    },
-    {
-        "method": "setUniformVec3Array",
-        "local": "setUniformVec3Array",
-        "cpp": "sf::Vector3f",
-        "lua": "sf.Vector3f[]",
-        "param": "vectorArray",
-        "check": "first.is<sf::Vector3f>()",
-    },
-    {
-        "method": "setUniformVec4Array",
-        "local": "setUniformVec4Array",
-        "cpp": "sf::priv::Vector4<float>",
-        "lua": "sf.Vector4f[]",
-        "param": "vectorArray",
-        "check": "first.is<sf::priv::Vector4<float>>()",
-    },
-    {
-        "method": "setUniformMat3Array",
-        "local": "setUniformMat3Array",
-        "cpp": "sf::priv::Matrix<3, 3>",
-        "lua": "sf.Mat3[]",
-        "param": "matrixArray",
-        "check": "first.is<sf::priv::Matrix<3, 3>>()",
-    },
-    {
-        "method": "setUniformMat4Array",
-        "local": "setUniformMat4Array",
-        "cpp": "sf::priv::Matrix<4, 4>",
-        "lua": "sf.Mat4[]",
-        "param": "matrixArray",
-        "check": "first.is<sf::priv::Matrix<4, 4>>()",
-    },
+CONFIGURED_METHOD_OVERRIDES: tuple[ConfiguredMethodOverride, ...] = (
+    ConfiguredMethodOverride(
+        qualified_function="sf::Shader::setUniformArray",
+        lua_name="setUniformArray",
+        helper="lua_sf::detail::bindShaderUniformArrays",
+        variant_factory="lua_sf::detail::shaderUniformArrayVariant",
+        native_parameter_types=(
+            "const std::string&",
+            "const {element}*",
+            "std::size_t",
+        ),
+        native_return_type="void",
+        variants=(
+            ConfiguredMethodVariant("setUniformFloatArray", "float", "number[]"),
+            ConfiguredMethodVariant("setUniformVec2Array", "sf::Glsl::Vec2", "sf.Vector2f[]"),
+            ConfiguredMethodVariant("setUniformVec3Array", "sf::Glsl::Vec3", "sf.Vector3f[]"),
+            ConfiguredMethodVariant("setUniformVec4Array", "sf::Glsl::Vec4", "sf.Vector4f[]"),
+            ConfiguredMethodVariant("setUniformMat3Array", "sf::Glsl::Mat3", "sf.Mat3[]"),
+            ConfiguredMethodVariant("setUniformMat4Array", "sf::Glsl::Mat4", "sf.Mat4[]"),
+        ),
+    ),
 )
 
 
@@ -981,11 +994,6 @@ _t("ll_reset_nonvoid",
     "if (result)",
     "    lua_sf::releaseLongLivedResources(self);",
     "return result;",
-)
-
-_t("shader_uniform_array",
-    "auto {param}_buffer = lua_sf::array_from_object<{cpp_type}>({param});",
-    "self.setUniformArray(name, {param}_buffer.data(), static_cast<std::size_t>({param}_buffer.size()));",
 )
 
 _t("template_unpack",
@@ -1113,23 +1121,56 @@ NUMERIC_ARRAY_TYPES: frozenset[str] = frozenset({
     "sf::priv::Matrix<4, 4>",
 })
 
-OUTPUT_REF_NAMES: frozenset[str] = frozenset({
-    "received",
-    "sent",
-    "remoteAddress",
-    "remotePort",
-    "socket",
-    "packet",
-})
+OUTPUT_REFERENCE_POLICIES: tuple[OutputReferencePolicy, ...] = (
+    OutputReferencePolicy(
+        "sf::TcpListener::accept",
+        ("sf::TcpSocket&",),
+        (OutputReferenceParameter(0, "socket"),),
+    ),
+    OutputReferencePolicy(
+        "sf::TcpSocket::send",
+        ("const void*", "std::size_t", "std::size_t&"),
+        (OutputReferenceParameter(2, "sent"),),
+    ),
+    OutputReferencePolicy(
+        "sf::TcpSocket::receive",
+        ("void*", "std::size_t", "std::size_t&"),
+        (OutputReferenceParameter(2, "received", count_for_array_parameter=0),),
+    ),
+    OutputReferencePolicy(
+        "sf::TcpSocket::receive",
+        ("sf::Packet&",),
+        (OutputReferenceParameter(0, "packet"),),
+    ),
+    OutputReferencePolicy(
+        "sf::UdpSocket::receive",
+        (
+            "void*",
+            "std::size_t",
+            "std::size_t&",
+            "std::optional<sf::IpAddress>&",
+            "unsigned short&",
+        ),
+        (
+            OutputReferenceParameter(2, "received", count_for_array_parameter=0),
+            OutputReferenceParameter(3, "remoteAddress"),
+            OutputReferenceParameter(4, "remotePort"),
+        ),
+    ),
+    OutputReferencePolicy(
+        "sf::UdpSocket::receive",
+        ("sf::Packet&", "std::optional<sf::IpAddress>&", "unsigned short&"),
+        (
+            OutputReferenceParameter(0, "packet"),
+            OutputReferenceParameter(1, "remoteAddress"),
+            OutputReferenceParameter(2, "remotePort"),
+        ),
+    ),
+)
 
-OUTPUT_REF_FUNCTIONS: frozenset[str] = frozenset({
-    "accept",
-    "receive",
-})
-
-OUTPUT_ARRAY_COUNT_REF_NAMES: frozenset[str] = frozenset({
-    "received",
-})
+SKIPPED_CLASS_BINDINGS: dict[str, str] = {
+    "sf::String": "converted through lua_sf string utilities",
+}
 
 SPECIAL_POINTER_RETURNS: dict[str, tuple[str, str]] = {
     "sf::Transform::getMatrix": ("float", "16"),
@@ -1148,21 +1189,26 @@ CALLBACK_CODEC_REGISTRY: tuple[CallbackCodec, ...] = (
         codec="lua_sf::callback::InterleavedFloatTransformCodec",
         lua_type="sf.SoundSource.EffectProcessor",
         lua_signature=(
-            "fun(inputFrames: sf.ReadOnlyFloatBufferView|nil, inputFrameCount: sf.UIntRef, "
-            "outputFrames: sf.WriteOnlyFloatBufferView, outputFrameCount: sf.UIntRef, "
-            "frameChannelCount: integer)"
+            "fun(inputFrames: number[]|nil, inputFrameCount: integer, "
+            "outputFrames: number[], outputFrameCount: integer, "
+            "frameChannelCount: integer): {inputFrameCount: integer, "
+            "outputFrameCount: integer, outputFrames: number[]?}"
         ),
         allow_nil=True,
         thread_policy="nativeTryEnter",
         directions=("fromLua", "toLua"),
         parameters=(
-            CallbackParameter("inputFrames", "inputBuffer", "read", nullable=True, unit="sample"),
-            CallbackParameter("inputFrameCount", "inputCount", "readWrite", unit="frame"),
-            CallbackParameter("outputFrames", "outputBuffer", "write", unit="sample"),
-            CallbackParameter("outputFrameCount", "outputCount", "readWrite", unit="frame"),
+            CallbackParameter("inputFrames", "copiedInputBuffer", "read", nullable=True, unit="sample"),
+            CallbackParameter("inputFrameCount", "inputCapacity", "read", unit="frame"),
+            CallbackParameter("outputFrames", "zeroInitializedOutputBuffer", "readWrite", unit="sample"),
+            CallbackParameter("outputFrameCount", "outputCapacity", "read", unit="frame"),
             CallbackParameter("frameChannelCount", "channelCount", "read", unit="channel"),
         ),
-        returns=(),
+        returns=(
+            CallbackReturn("inputFrameCount", "consumedInputCount", unit="frame"),
+            CallbackReturn("outputFrameCount", "producedOutputCount", unit="frame"),
+            CallbackReturn("outputFrames", "replacementOutputBuffer", nullable=True, unit="sample"),
+        ),
     ),
     CallbackCodec(
         name="glyphPreProcessor",
@@ -1234,9 +1280,6 @@ CALLBACK_CODEC_REGISTRY: tuple[CallbackCodec, ...] = (
         name="playbackDeviceNotification",
         selector=CallbackSelector(
             semantic_alias="sf::PlaybackDevice::NotificationCallback",
-            qualified_function="sf::PlaybackDevice::setNotificationCallback",
-            parameter_name="callback",
-            callable_signature="void(sf::PlaybackDevice::Notification)",
         ),
         canonical_type="std::function<void(sf::PlaybackDevice::Notification)>",
         native_callable="sf::PlaybackDevice::NotificationCallback",

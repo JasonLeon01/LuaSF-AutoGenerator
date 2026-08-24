@@ -175,15 +175,25 @@ int main()
     if (L == nullptr)
         return 1;
 
-    if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+    int result = 0;
+    if (LuaSF_enter_state(L) == 0)
     {
-        fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
-        lua_close(L);
-        return 1;
+        result = 1;
+    }
+    else
+    {
+        if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+        {
+            fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
+            result = 1;
+        }
+        LuaSF_leave_state(L);
     }
 
+    LuaSF_quiesce_state(L);
+    LuaSF_shutdown_state(L);
     lua_close(L);
-    return 0;
+    return result;
 }
 ```
 
@@ -243,25 +253,43 @@ The collected package exposes these CMake items:
 
 The generated `.d.lua` is a global declaration file and starts with `---@meta`, allowing EmmyLua to expose the `sf` API from a dedicated stub library directory.
 
-`callback_codecs.json` describes callback conversions by semantic C++ alias or an exact function-parameter use site. Consumers should read this generated manifest instead of matching expanded `std::function` signatures, and may validate its canonical types against the adjacent `sfml_api.json` snapshot. In particular, `sf::SoundSource::EffectProcessor` is the only selector for the interleaved-float audio codec; an unrelated alias with the same canonical signature does not opt into that protocol.
+`callback_codecs.json` describes special callback conversions by semantic C++ alias or an exact function-parameter use site. Consumers should read this generated manifest instead of matching expanded `std::function` signatures, and may validate its canonical types against the adjacent `sfml_api.json` snapshot. In particular, `sf::SoundSource::EffectProcessor` is the only semantic selector for the interleaved-float audio codec; an unrelated alias with the same canonical signature does not opt into that protocol.
+
+### Generic `std::function` callbacks
+
+The generator treats `std::function<R(Args...)>` as a recursive first-class type. A Lua function passed to an ordinary C++ `std::function` parameter is automatically retained in the Lua registry and bridged through the same scalar, enum, string, path, bound value/usertype, `vector`, and `optional` conversions used by normal bindings. Both `void` and value returns are supported when every nested type is safely expressible. This is type-driven: there is no whitelist of SFML function names, so compatible callbacks added by future SFML releases use the same generation path automatically.
+
+Signatures containing a bare pointer, writable reference/out parameter, rvalue reference, pointer or reference return, a native-thread boundary, or another lifetime or synchronization contract that the C++ type alone cannot express require one explicitly selected special codec. The selector must be either a semantic alias or an exact function/parameter/signature use site; zero matches and ambiguous matches fail generation. Lua values are validated at the binding boundary, including whether `nil` is allowed by the selected policy. C++ APIs that return `std::function` are not generated in this release.
 
 ### Sound effect callback contract
 
-`sf.SoundSource.EffectProcessor` is exposed as a five-argument, no-return callback:
+`sf.SoundSource.EffectProcessor` is exposed as a copying callback with this Lua signature:
 
 ```lua
 fun(
-    inputFrames: sf.ReadOnlyFloatBufferView|nil,
-    inputFrameCount: sf.UIntRef,
-    outputFrames: sf.WriteOnlyFloatBufferView,
-    outputFrameCount: sf.UIntRef,
+    inputFrames: number[]|nil,
+    inputFrameCount: integer,
+    outputFrames: number[],
+    outputFrameCount: integer,
     frameChannelCount: integer
-)
+): {
+    inputFrameCount: integer,
+    outputFrameCount: integer,
+    outputFrames: number[]?
+}
 ```
 
-Buffer indices are 1-based flat interleaved samples; `#view` and `view:size()` are sample counts. `UIntRef.value` is mutable, while `UIntRef.capacity` is read-only, and both are measured in frames. Input is `nil` at end of stream, allowing an effect to emit buffered tail audio. The callback return value is ignored.
+Arrays contain flat interleaved samples at 1-based Lua indices. Counts are measured in frames; array lengths are measured in samples. A non-`nil` input array has exactly `inputFrameCount * frameChannelCount` samples. At end of stream, input is `nil` and its frame count is zero. The output array is zero-initialized with exactly `outputFrameCount * frameChannelCount` samples before the call.
 
-Views and refs borrow SFML's native buffers and expire permanently when the callback returns. Input writes, output reads, invalid indices or counts, and expired access are errors. The audio thread tries to enter the Lua state without waiting: contention and state shutdown bypass the effect for the current block. A Lua or contract error latches the shared processor context, so its copies subsequently bypass; the fixed-capacity deferred error can be consumed once on a logic thread with `LuaSF_take_deferred_callback_error`.
+The callback must return a table containing the consumed `inputFrameCount` and produced `outputFrameCount`, both within the original capacities. If the result omits `outputFrames`, LuaSF copies samples from the possibly modified third argument; if it provides `outputFrames`, that dense array replaces the third argument. The selected output array must cover every produced sample and may not exceed the output capacity. Sparse arrays, non-array keys, invalid counts, overflow, and capacity violations are contract errors.
+
+The audio thread tries to enter the Lua state without waiting. Lock contention bypasses only the current block and does not latch an error; after the lock is released, processing resumes. A Lua or protocol error latches the shared processor context, so the current and subsequent blocks bypass. Its fixed-capacity deferred error can be consumed once on a logic thread with `LuaSF_take_deferred_callback_error`.
+
+### Callback state and host contract
+
+LuaSF uses the `LUA_RIDX_MAINTHREAD` value as the identity for every registered `lua_State*`, including coroutine threads. Sessions, execution hooks, deferred errors, callback retention, quiescing, and shutdown therefore belong to the main state. Callback conversion automatically registers the currently executing coroutine and keeps it alive until shutdown, so a callback may be created from a coroutine stack and invoked later through the owning main state. If a host wants to pass a newly created coroutine directly to lifecycle or enter/leave APIs before any callback conversion has observed it, the host must first call `LuaSF_initialize_state(coroutine)` while it exclusively owns that VM; otherwise, pass the main state.
+
+The host must serialize every Lua entry point—including `lua_pcall`, `luaL_dofile`, and equivalent APIs—with native callbacks. Wrap each entry with a successful `LuaSF_enter_state` and a matching `LuaSF_leave_state`, or install execution hooks and use that same re-entrant/recursive VM lock consistently for host execution. Before closing a state, stop callback producers and always perform `LuaSF_quiesce_state` → `LuaSF_shutdown_state` → `lua_close`; no callback may access the state after shutdown.
 
 ## Runtime Notes
 

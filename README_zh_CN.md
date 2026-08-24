@@ -175,15 +175,25 @@ int main()
     if (L == nullptr)
         return 1;
 
-    if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+    int result = 0;
+    if (LuaSF_enter_state(L) == 0)
     {
-        fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
-        lua_close(L);
-        return 1;
+        result = 1;
+    }
+    else
+    {
+        if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+        {
+            fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
+            result = 1;
+        }
+        LuaSF_leave_state(L);
     }
 
+    LuaSF_quiesce_state(L);
+    LuaSF_shutdown_state(L);
     lua_close(L);
-    return 0;
+    return result;
 }
 ```
 
@@ -243,25 +253,43 @@ end
 
 生成的 `.d.lua` 是全局声明文件，以 `---@meta` 开头；EmmyLua 可从独立 stub 库目录中暴露其中的 `sf` API。
 
-`callback_codecs.json` 通过语义 C++ alias 或精确的函数参数使用点描述 callback 转换。消费方应读取这份生成 manifest，而不是匹配展开后的 `std::function` 签名，并可用相邻的 `sfml_api.json` 快照严格校验 canonical type。特别是，交错 float 音频 codec 只由 `sf::SoundSource::EffectProcessor` 选择；具有相同 canonical 签名的无关 alias 不会进入该协议。
+`callback_codecs.json` 通过语义 C++ alias 或精确的函数参数使用点描述特殊 callback 转换。消费方应读取这份生成 manifest，而不是匹配展开后的 `std::function` 签名，并可用相邻的 `sfml_api.json` 快照严格校验 canonical type。特别是，交错 float 音频 codec 只由 `sf::SoundSource::EffectProcessor` 这一语义 selector 选择；具有相同 canonical 签名的无关 alias 不会进入该协议。
+
+### 通用 `std::function` callback
+
+生成器将 `std::function<R(Args...)>` 作为可递归的一等类型处理。传给普通 C++ `std::function` 参数的 Lua function 会自动保存在 Lua registry 中，并复用普通绑定的标量、枚举、字符串、path、已绑定 value/usertype、`vector` 和 `optional` 转换。只要所有子类型都能安全表达，就同时支持 `void` 和普通值返回。该流程完全由类型驱动，没有 SFML 函数名白名单；未来 SFML 新增的兼容 callback 会自动走同一生成路径。
+
+如果签名包含裸指针、可写引用/out 参数、rvalue reference、指针或引用返回值、native thread 边界，或者 C++ 类型本身无法表达的生命周期及同步约束，就必须显式选择且唯一命中一个特殊 codec。selector 只能是语义 alias，或精确的函数/参数/signature 使用点；零命中或多重命中都会令生成失败。Lua 值会在绑定调用边界立即验证，包括所选策略是否允许 `nil`。本版本仍不生成返回 `std::function` 的 C++ API。
 
 ### 音效回调契约
 
-`sf.SoundSource.EffectProcessor` 暴露为严格的五参数、无返回值回调：
+`sf.SoundSource.EffectProcessor` 使用复制协议，Lua 签名如下：
 
 ```lua
 fun(
-    inputFrames: sf.ReadOnlyFloatBufferView|nil,
-    inputFrameCount: sf.UIntRef,
-    outputFrames: sf.WriteOnlyFloatBufferView,
-    outputFrameCount: sf.UIntRef,
+    inputFrames: number[]|nil,
+    inputFrameCount: integer,
+    outputFrames: number[],
+    outputFrameCount: integer,
     frameChannelCount: integer
-)
+): {
+    inputFrameCount: integer,
+    outputFrameCount: integer,
+    outputFrames: number[]?
+}
 ```
 
-Buffer 使用从 1 开始的 flat interleaved sample 索引；`#view` 和 `view:size()` 的单位是 sample。`UIntRef.value` 可写，`UIntRef.capacity` 只读，两者单位均为 frame。流结束时 input 为 `nil`，effect 仍可输出缓存的尾音；回调返回值会被忽略。
+数组按 Lua 的 1-based 索引保存 flat interleaved sample。count 的单位是 frame，数组长度的单位是 sample。非 `nil` 输入数组必须恰好包含 `inputFrameCount * frameChannelCount` 个 sample；流结束时 input 为 `nil` 且输入 frame count 必须为零。调用前，输出数组会按 `outputFrameCount * frameChannelCount` 个 sample 零初始化。
 
-View 与 ref 直接借用 SFML 原生 buffer，并在回调返回时永久失效。写 input、读 output、非法索引或 count、访问过期对象都会报错。音频线程只尝试进入 Lua state，不会等待：锁竞争或 state 关闭时，本 block 直接旁路。Lua 或契约错误会锁存共享 processor context，之后其所有副本均旁路；逻辑线程可通过 `LuaSF_take_deferred_callback_error` 仅取出一次固定容量的延迟错误。
+callback 必须返回 table，其中包含实际消费的 `inputFrameCount` 和实际产生的 `outputFrameCount`，且二者不能超过原始容量。若结果省略 `outputFrames`，LuaSF 会回拷可能已被修改的第三个参数；若提供 `outputFrames`，则改用该 dense 数组。选中的输出数组必须覆盖所有实际输出 sample，且不能超过输出容量。稀疏数组、非数组 key、非法 count、溢出和容量越界均属于协议错误。
+
+音频线程只尝试进入 Lua state，不会等待。锁竞争只会旁路当前 block，且不会锁存错误；锁释放后会恢复处理。Lua 或协议错误会锁存共享 processor context，使当前及后续 block 均旁路；逻辑线程可通过 `LuaSF_take_deferred_callback_error` 仅取出一次固定容量的延迟错误。
+
+### Callback state 与宿主契约
+
+LuaSF 以 `LUA_RIDX_MAINTHREAD` 作为每个已登记 `lua_State*`（包括 coroutine thread）的统一 identity。session、execution hook、deferred error、callback 保活、quiesce 和 shutdown 都归属 main state。callback 转换会自动登记当前正在执行的 coroutine，并将其强保活到 shutdown，因此 callback 可以在 coroutine 栈上创建 registry 引用，之后通过所属 main state 安全调用。如果宿主要在 callback 转换尚未观察到新 coroutine 前，直接把它传给 lifecycle 或 enter/leave API，必须先在独占该 VM 时调用 `LuaSF_initialize_state(coroutine)`；否则应传 main state。
+
+宿主必须让所有 Lua 入口（包括 `lua_pcall`、`luaL_dofile` 及同类 API）与 native callback 串行化。每个入口都应在成功的 `LuaSF_enter_state` 后执行并匹配 `LuaSF_leave_state`，或者安装 execution hooks，并让宿主执行始终使用同一把可重入/递归 VM lock。关闭 state 前必须先停止 callback producer，并严格执行 `LuaSF_quiesce_state` → `LuaSF_shutdown_state` → `lua_close`；shutdown 之后 callback 不得再访问该 state。
 
 ## 运行时说明
 

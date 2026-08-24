@@ -62,14 +62,16 @@ private:
 
 namespace detail {
 
-LUASF_API void retainLuaRegistryReference(
-    const void *owner, const LuaRegistryReference &reference);
+LUASF_API void registerLuaThreadForRegistryReference(lua_State *state);
+LUASF_API void
+retainLuaRegistryReference(const void *owner,
+                           const LuaRegistryReference &reference);
 LUASF_API void releaseLuaRegistryReference(const void *owner);
-LUASF_API void registerStateQuiesceCallback(
-    lua_State *state, const void *owner, LuaStateQuiesceCallback callback);
+LUASF_API void registerStateQuiesceCallback(lua_State *state, const void *owner,
+                                            LuaStateQuiesceCallback callback);
 LUASF_API void unregisterStateQuiesceCallback(lua_State *state,
                                               const void *owner) noexcept;
 
-}
+} // namespace detail
 
-}
+} // namespace lua_sf
