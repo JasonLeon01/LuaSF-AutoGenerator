@@ -6,8 +6,8 @@ extern "C" {
 }
 
 #include <algorithm>
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -29,7 +29,7 @@ enum class LuaStatePhase {
 
 struct LuaStateSession;
 
-}
+} // namespace lua_sf::detail_internal
 
 namespace lua_sf {
 
@@ -46,7 +46,7 @@ struct LuaRegistryReferenceState {
   int reference{LUA_NOREF};
 };
 
-}
+} // namespace lua_sf
 
 namespace lua_sf::detail_internal {
 
@@ -70,8 +70,8 @@ public:
       const std::intptr_t difference = static_cast<std::intptr_t>(sequence) -
                                        static_cast<std::intptr_t>(position);
       if (difference == 0) {
-        if (enqueuePosition_.compare_exchange_weak(
-                position, position + 1, std::memory_order_relaxed))
+        if (enqueuePosition_.compare_exchange_weak(position, position + 1,
+                                                   std::memory_order_relaxed))
           break;
       } else if (difference < 0) {
         overflowPending_.store(1, std::memory_order_release);
@@ -98,12 +98,11 @@ public:
       slot = &slots_[position & (capacity - 1)];
       const std::size_t sequence =
           slot->sequence.load(std::memory_order_acquire);
-      const std::intptr_t difference =
-          static_cast<std::intptr_t>(sequence) -
-          static_cast<std::intptr_t>(position + 1);
+      const std::intptr_t difference = static_cast<std::intptr_t>(sequence) -
+                                       static_cast<std::intptr_t>(position + 1);
       if (difference == 0) {
-        if (dequeuePosition_.compare_exchange_weak(
-                position, position + 1, std::memory_order_relaxed))
+        if (dequeuePosition_.compare_exchange_weak(position, position + 1,
+                                                   std::memory_order_relaxed))
           break;
       } else if (difference < 0) {
         if (overflowPending_.exchange(0, std::memory_order_acq_rel) == 0)
@@ -172,6 +171,7 @@ struct LuaStateSession {
 
 struct EnteredSession {
   lua_State *state{};
+  lua_State *requestedState{};
   std::shared_ptr<LuaStateSession> session;
   LuaSFStateLeaveHook leaveHook{};
   void *hookContext{};
@@ -180,6 +180,7 @@ struct EnteredSession {
 
 std::mutex sessionsMutex;
 std::unordered_map<lua_State *, std::shared_ptr<LuaStateSession>> sessions;
+std::unordered_map<lua_State *, lua_State *> stateAliases;
 class EnteredSessionStack final {
 public:
   [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
@@ -209,20 +210,144 @@ private:
 
 thread_local EnteredSessionStack enteredSessions;
 
-std::shared_ptr<LuaStateSession> findSession(lua_State *state) {
+lua_State *mainThreadFromRegistry(lua_State *state) noexcept {
+  if (state == nullptr || lua_checkstack(state, 1) == 0)
+    return nullptr;
+
+  const int originalTop = lua_gettop(state);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+  lua_State *mainState = lua_tothread(state, -1);
+  lua_settop(state, originalTop);
+  return mainState;
+}
+
+std::shared_ptr<LuaStateSession> findSessionByMainState(lua_State *mainState) {
+  if (mainState == nullptr)
+    return {};
   std::scoped_lock lock(sessionsMutex);
-  const auto item = sessions.find(state);
+  const auto item = sessions.find(mainState);
   return item == sessions.end() ? std::shared_ptr<LuaStateSession>{}
                                 : item->second;
 }
 
-std::shared_ptr<LuaStateSession> tryFindSession(lua_State *state) {
+struct ResolvedSession {
+  lua_State *mainState{};
+  std::shared_ptr<LuaStateSession> session;
+};
+
+ResolvedSession findResolvedSessionLocked(lua_State *state) {
+  const auto alias = stateAliases.find(state);
+  if (alias == stateAliases.end())
+    return {};
+  const auto session = sessions.find(alias->second);
+  return session == sessions.end()
+             ? ResolvedSession{}
+             : ResolvedSession{alias->second, session->second};
+}
+
+ResolvedSession findResolvedSession(lua_State *state) noexcept {
+  if (state == nullptr)
+    return {};
+  try {
+    std::scoped_lock lock(sessionsMutex);
+    return findResolvedSessionLocked(state);
+  } catch (...) {
+    return {};
+  }
+}
+
+bool addStateAliasUnderExecution(
+    lua_State *state, lua_State *mainState,
+    const std::shared_ptr<LuaStateSession> &session) noexcept {
+  if (state == nullptr || mainState == nullptr || session == nullptr)
+    return false;
+
+  int threadReference = LUA_NOREF;
+  if (state != mainState) {
+    lua_pushthread(state);
+    threadReference = luaL_ref(state, LUA_REGISTRYINDEX);
+    if (threadReference < 0)
+      return false;
+    try {
+      std::scoped_lock lock(session->metadataMutex);
+      if (session->state != mainState ||
+          session->phase.load(std::memory_order_acquire) !=
+              LuaStatePhase::running ||
+          !session->registryReferences.insert(threadReference).second) {
+        luaL_unref(state, LUA_REGISTRYINDEX, threadReference);
+        return false;
+      }
+    } catch (...) {
+      luaL_unref(state, LUA_REGISTRYINDEX, threadReference);
+      return false;
+    }
+  }
+
+  bool aliasRegistered = false;
+  try {
+    std::scoped_lock lock(sessionsMutex);
+    const auto activeSession = sessions.find(mainState);
+    if (activeSession != sessions.end() && activeSession->second == session) {
+      stateAliases.insert_or_assign(state, mainState);
+      aliasRegistered = true;
+    }
+  } catch (...) {
+  }
+  if (aliasRegistered)
+    return true;
+
+  if (threadReference >= 0) {
+    try {
+      std::scoped_lock lock(session->metadataMutex);
+      session->registryReferences.erase(threadReference);
+    } catch (...) {
+    }
+    luaL_unref(state, LUA_REGISTRYINDEX, threadReference);
+  }
+  return false;
+}
+
+ResolvedSession resolveSession(lua_State *state) noexcept {
+  return findResolvedSession(state);
+}
+
+ResolvedSession
+learnRegistryReferenceSessionUnderExecution(lua_State *state) noexcept {
+  ResolvedSession resolved = findResolvedSession(state);
+  if (resolved.session != nullptr)
+    return resolved;
+
+  // Registry-reference construction receives the currently executing Lua
+  // thread. The host therefore already owns the VM either through a LuaSF
+  // scope or through the same lock installed as its execution hooks.
+  lua_State *mainState = mainThreadFromRegistry(state);
+  if (mainState == nullptr)
+    return {};
+  std::shared_ptr<LuaStateSession> session;
+  if (!enteredSessions.empty()) {
+    const EnteredSession &entered = enteredSessions.back();
+    if (mainState != entered.state)
+      return {};
+    session = entered.session;
+  } else {
+    session = findSessionByMainState(mainState);
+  }
+  if (session == nullptr ||
+      session->phase.load(std::memory_order_acquire) !=
+          LuaStatePhase::running ||
+      !addStateAliasUnderExecution(state, mainState, session))
+    return {};
+  return {mainState, std::move(session)};
+}
+
+ResolvedSession tryResolveSession(lua_State *state) noexcept {
+  if (state == nullptr)
+    return {};
+
   std::unique_lock lock(sessionsMutex, std::try_to_lock);
   if (!lock.owns_lock())
     return {};
-  const auto item = sessions.find(state);
-  return item == sessions.end() ? std::shared_ptr<LuaStateSession>{}
-                                : item->second;
+  return findResolvedSessionLocked(state);
 }
 
 std::vector<std::shared_ptr<LuaStateSession>> snapshotSessions() {
@@ -236,19 +361,21 @@ std::vector<std::shared_ptr<LuaStateSession>> snapshotSessions() {
   return result;
 }
 
-}
+} // namespace lua_sf::detail_internal
 
 namespace lua_sf {
 
 LuaRegistryReferenceState::~LuaRegistryReferenceState() {
   if (reference < 0)
     return;
-  LuaStateExecutionScope execution(state);
-  if (!execution.active())
-    return;
   const std::shared_ptr<detail_internal::LuaStateSession> activeSession =
       session.lock();
-  if (activeSession == nullptr)
+  if (activeSession == nullptr ||
+      activeSession->phase.load(std::memory_order_acquire) !=
+          detail_internal::LuaStatePhase::running)
+    return;
+  LuaStateExecutionScope execution(state);
+  if (!execution.active())
     return;
   std::scoped_lock lock(activeSession->metadataMutex);
   if (activeSession->state != state ||
@@ -260,7 +387,10 @@ LuaRegistryReferenceState::~LuaRegistryReferenceState() {
 }
 
 LuaStateExecutionScope::LuaStateExecutionScope(lua_State *state) noexcept
-    : state_(state), active_(LuaSF_enter_state(state) != 0) {}
+    : active_(LuaSF_enter_state(state) != 0) {
+  if (active_ && !detail_internal::enteredSessions.empty())
+    state_ = detail_internal::enteredSessions.back().state;
+}
 
 LuaStateExecutionScope::~LuaStateExecutionScope() {
   if (active_)
@@ -269,9 +399,11 @@ LuaStateExecutionScope::~LuaStateExecutionScope() {
 
 bool LuaStateExecutionScope::active() const noexcept { return active_; }
 
-LuaStateTryExecutionScope::LuaStateTryExecutionScope(
-    lua_State *state) noexcept
-    : state_(state), active_(LuaSF_try_enter_state(state) != 0) {}
+LuaStateTryExecutionScope::LuaStateTryExecutionScope(lua_State *state) noexcept
+    : active_(LuaSF_try_enter_state(state) != 0) {
+  if (active_ && !detail_internal::enteredSessions.empty())
+    state_ = detail_internal::enteredSessions.back().state;
+}
 
 LuaStateTryExecutionScope::~LuaStateTryExecutionScope() {
   if (active_)
@@ -281,21 +413,27 @@ LuaStateTryExecutionScope::~LuaStateTryExecutionScope() {
 bool LuaStateTryExecutionScope::active() const noexcept { return active_; }
 
 LuaRegistryReference::LuaRegistryReference(lua_State *state, int stackIndex) {
-  LuaStateExecutionScope execution(state);
+  if (state == nullptr)
+    throw std::invalid_argument("Lua registry reference has no state");
+  const detail_internal::ResolvedSession resolved =
+      detail_internal::resolveSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<detail_internal::LuaStateSession> &session =
+      resolved.session;
+  if (mainState == nullptr || session == nullptr)
+    throw std::logic_error("Lua registry reference has no main state");
+  LuaStateExecutionScope execution(mainState);
   if (!execution.active())
     throw std::logic_error("Lua state is stopping");
-  const std::shared_ptr<detail_internal::LuaStateSession> session =
-      detail_internal::findSession(state);
-  if (session == nullptr)
-    throw std::logic_error("Lua registry reference has no active state");
+  const int absoluteStackIndex = lua_absindex(state, stackIndex);
   std::scoped_lock lock(session->metadataMutex);
-  if (session->state != state ||
+  if (session->state != mainState ||
       session->phase.load(std::memory_order_acquire) !=
           detail_internal::LuaStatePhase::running)
     throw std::logic_error("Lua state is stopping");
   std::shared_ptr<LuaRegistryReferenceState> reference =
-      std::make_shared<LuaRegistryReferenceState>(session, state);
-  lua_pushvalue(state, stackIndex);
+      std::make_shared<LuaRegistryReferenceState>(session, mainState);
+  lua_pushvalue(state, absoluteStackIndex);
   reference->reference = luaL_ref(state, LUA_REGISTRYINDEX);
   if (reference->reference >= 0)
     session->registryReferences.insert(reference->reference);
@@ -303,18 +441,26 @@ LuaRegistryReference::LuaRegistryReference(lua_State *state, int stackIndex) {
 }
 
 lua_State *LuaRegistryReference::state() const noexcept {
-  return reference_ == nullptr ? nullptr : reference_->state;
+  if (reference_ == nullptr)
+    return nullptr;
+  const std::shared_ptr<detail_internal::LuaStateSession> session =
+      reference_->session.lock();
+  if (session == nullptr || session->phase.load(std::memory_order_acquire) !=
+                                detail_internal::LuaStatePhase::running)
+    return nullptr;
+  return reference_->state;
 }
 
 bool LuaRegistryReference::push() const {
   if (reference_ == nullptr)
     return false;
-  LuaStateExecutionScope execution(reference_->state);
-  if (!execution.active())
-    return false;
   const std::shared_ptr<detail_internal::LuaStateSession> session =
       reference_->session.lock();
-  if (session == nullptr)
+  if (session == nullptr || session->phase.load(std::memory_order_acquire) !=
+                                detail_internal::LuaStatePhase::running)
+    return false;
+  LuaStateExecutionScope execution(reference_->state);
+  if (!execution.active())
     return false;
   std::scoped_lock lock(session->metadataMutex);
   if (session->state != reference_->state ||
@@ -324,8 +470,7 @@ bool LuaRegistryReference::push() const {
   if (reference_->reference == LUA_REFNIL)
     lua_pushnil(reference_->state);
   else
-    lua_rawgeti(reference_->state, LUA_REGISTRYINDEX,
-                reference_->reference);
+    lua_rawgeti(reference_->state, LUA_REGISTRYINDEX, reference_->reference);
   return true;
 }
 
@@ -348,8 +493,7 @@ bool LuaRegistryReference::pushUnderExecutionScope() const noexcept {
   if (reference_->reference == LUA_REFNIL)
     lua_pushnil(reference_->state);
   else
-    lua_rawgeti(reference_->state, LUA_REGISTRYINDEX,
-                reference_->reference);
+    lua_rawgeti(reference_->state, LUA_REGISTRYINDEX, reference_->reference);
   return true;
 }
 
@@ -363,17 +507,18 @@ void LuaRegistryReference::deferCallbackError(
     session->deferredCallbackErrors.enqueue(label, message);
 }
 
-bool LuaRegistryReference::equals(
-    const LuaRegistryReference &other) const {
+bool LuaRegistryReference::equals(const LuaRegistryReference &other) const {
   if (reference_ == nullptr || other.reference_ == nullptr ||
       reference_->state != other.reference_->state)
     return false;
-  LuaStateExecutionScope execution(reference_->state);
-  if (!execution.active())
-    return false;
   const std::shared_ptr<detail_internal::LuaStateSession> session =
       reference_->session.lock();
-  if (session == nullptr || session != other.reference_->session.lock())
+  if (session == nullptr || session != other.reference_->session.lock() ||
+      session->phase.load(std::memory_order_acquire) !=
+          detail_internal::LuaStatePhase::running)
+    return false;
+  LuaStateExecutionScope execution(reference_->state);
+  if (!execution.active())
     return false;
   std::scoped_lock lock(session->metadataMutex);
   if (session->state != reference_->state ||
@@ -383,8 +528,7 @@ bool LuaRegistryReference::equals(
   if (reference_->reference == LUA_REFNIL)
     lua_pushnil(reference_->state);
   else
-    lua_rawgeti(reference_->state, LUA_REGISTRYINDEX,
-                reference_->reference);
+    lua_rawgeti(reference_->state, LUA_REGISTRYINDEX, reference_->reference);
   if (other.reference_->reference == LUA_REFNIL)
     lua_pushnil(reference_->state);
   else
@@ -401,19 +545,32 @@ LuaRegistryReference::operator bool() const noexcept {
 
 namespace detail {
 
-void retainLuaRegistryReference(
-    const void *owner, const LuaRegistryReference &reference) {
+void registerLuaThreadForRegistryReference(lua_State *state) {
+  if (state == nullptr)
+    throw std::invalid_argument("Lua registry reference has no state");
+  const detail_internal::ResolvedSession resolved =
+      detail_internal::learnRegistryReferenceSessionUnderExecution(state);
+  if (resolved.session == nullptr)
+    throw std::logic_error(
+        "Lua registry reference requires an entered main state");
+}
+
+void retainLuaRegistryReference(const void *owner,
+                                const LuaRegistryReference &reference) {
   if (owner == nullptr || !reference)
     return;
+  lua_State *state = reference.state();
+  if (state == nullptr)
+    return;
   const std::shared_ptr<detail_internal::LuaStateSession> session =
-      detail_internal::findSession(reference.state());
+      detail_internal::findSessionByMainState(state);
   if (session == nullptr)
     return;
-  LuaStateExecutionScope execution(reference.state());
+  LuaStateExecutionScope execution(state);
   if (!execution.active())
     return;
   std::scoped_lock lock(session->metadataMutex);
-  if (session->state != reference.state() ||
+  if (session->state != state ||
       session->phase.load(std::memory_order_acquire) !=
           detail_internal::LuaStatePhase::running)
     return;
@@ -442,15 +599,18 @@ void registerStateQuiesceCallback(lua_State *state, const void *owner,
                                   LuaStateQuiesceCallback callback) {
   if (state == nullptr || owner == nullptr || callback == nullptr)
     throw std::invalid_argument("State quiesce callback is incomplete");
-  const std::shared_ptr<detail_internal::LuaStateSession> session =
-      detail_internal::findSession(state);
+  const detail_internal::ResolvedSession resolved =
+      detail_internal::resolveSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     throw std::logic_error("State quiesce callback has no active state");
-  LuaStateExecutionScope execution(state);
+  LuaStateExecutionScope execution(mainState);
   if (!execution.active())
     throw std::logic_error("Lua state is stopping");
   std::scoped_lock lock(session->metadataMutex);
-  if (session->state != state || session->quiescing ||
+  if (session->state != mainState || session->quiescing ||
       session->phase.load(std::memory_order_acquire) !=
           detail_internal::LuaStatePhase::running)
     throw std::logic_error("Lua state is stopping");
@@ -461,53 +621,102 @@ void unregisterStateQuiesceCallback(lua_State *state,
                                     const void *owner) noexcept {
   if (state == nullptr || owner == nullptr)
     return;
-  const std::shared_ptr<detail_internal::LuaStateSession> session =
-      detail_internal::findSession(state);
+  const detail_internal::ResolvedSession resolved =
+      detail_internal::findResolvedSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     return;
   std::scoped_lock lock(session->metadataMutex);
-  if (session->state == state)
+  if (session->state == mainState)
     session->quiesceCallbacks.erase(owner);
 }
 
-}
+} // namespace detail
 
-}
+} // namespace lua_sf
 
 extern "C" LUASF_API int LuaSF_initialize_state(lua_State *state) {
   if (state == nullptr)
     return 1;
-  std::scoped_lock lock(lua_sf::detail_internal::sessionsMutex);
-  const auto item = lua_sf::detail_internal::sessions.find(state);
-  if (item != lua_sf::detail_internal::sessions.end()) {
-    return item->second->phase.load(std::memory_order_acquire) ==
+  const lua_sf::detail_internal::ResolvedSession existing =
+      lua_sf::detail_internal::findResolvedSession(state);
+  if (existing.session != nullptr) {
+    return existing.session->phase.load(std::memory_order_acquire) ==
                    lua_sf::detail_internal::LuaStatePhase::running
                ? 0
                : 1;
   }
-  lua_sf::detail_internal::sessions.emplace(
-      state,
-      std::make_shared<lua_sf::detail_internal::LuaStateSession>(state));
-  return 0;
+
+  // Initialization is called by the thread currently executing registration,
+  // before a LuaSF execution gate necessarily exists. It is the only public
+  // entry point that learns a VM identity without a pre-existing session.
+  lua_State *mainState = lua_sf::detail_internal::mainThreadFromRegistry(state);
+  if (mainState == nullptr)
+    return 1;
+  std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session;
+  bool createdSession = false;
+  try {
+    std::scoped_lock lock(lua_sf::detail_internal::sessionsMutex);
+    const auto item = lua_sf::detail_internal::sessions.find(mainState);
+    if (item != lua_sf::detail_internal::sessions.end()) {
+      if (item->second->phase.load(std::memory_order_acquire) !=
+          lua_sf::detail_internal::LuaStatePhase::running)
+        return 1;
+      session = item->second;
+    } else {
+      session =
+          std::make_shared<lua_sf::detail_internal::LuaStateSession>(mainState);
+      lua_sf::detail_internal::sessions.emplace(mainState, session);
+      createdSession = true;
+    }
+    try {
+      lua_sf::detail_internal::stateAliases.insert_or_assign(mainState,
+                                                             mainState);
+    } catch (...) {
+      lua_sf::detail_internal::stateAliases.erase(mainState);
+      if (createdSession)
+        lua_sf::detail_internal::sessions.erase(mainState);
+      throw;
+    }
+  } catch (...) {
+    return 1;
+  }
+
+  bool initialized = false;
+  {
+    lua_sf::LuaStateExecutionScope execution(mainState);
+    if (execution.active()) {
+      initialized = state == mainState ||
+                    lua_sf::detail_internal::addStateAliasUnderExecution(
+                        state, mainState, session);
+    }
+  }
+  if (!initialized && createdSession)
+    LuaSF_shutdown_state(mainState);
+  return initialized ? 0 : 1;
 }
 
-extern "C" LUASF_API int LuaSF_set_state_execution_hooks(
-    lua_State *state, LuaSFStateEnterHook enterHook,
-    LuaSFStateTryEnterHook tryEnterHook, LuaSFStateLeaveHook leaveHook,
-    void *context) {
-  if (state == nullptr ||
-      (enterHook == nullptr) != (tryEnterHook == nullptr) ||
+extern "C" LUASF_API int
+LuaSF_set_state_execution_hooks(lua_State *state, LuaSFStateEnterHook enterHook,
+                                LuaSFStateTryEnterHook tryEnterHook,
+                                LuaSFStateLeaveHook leaveHook, void *context) {
+  if (state == nullptr || (enterHook == nullptr) != (tryEnterHook == nullptr) ||
       (enterHook == nullptr) != (leaveHook == nullptr))
     return 1;
-  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session =
-      lua_sf::detail_internal::findSession(state);
+  const lua_sf::detail_internal::ResolvedSession resolved =
+      lua_sf::detail_internal::resolveSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     return 1;
-  lua_sf::LuaStateExecutionScope execution(state);
+  lua_sf::LuaStateExecutionScope execution(mainState);
   if (!execution.active())
     return 1;
   std::scoped_lock lock(session->metadataMutex);
-  if (session->state != state ||
+  if (session->state != mainState ||
       session->phase.load(std::memory_order_acquire) !=
           lua_sf::detail_internal::LuaStatePhase::running)
     return 1;
@@ -519,8 +728,11 @@ extern "C" LUASF_API int LuaSF_set_state_execution_hooks(
 }
 
 extern "C" LUASF_API int LuaSF_enter_state(lua_State *state) {
-  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session =
-      lua_sf::detail_internal::findSession(state);
+  const lua_sf::detail_internal::ResolvedSession resolved =
+      lua_sf::detail_internal::resolveSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     return 0;
   LuaSFStateEnterHook enterHook = nullptr;
@@ -528,7 +740,7 @@ extern "C" LUASF_API int LuaSF_enter_state(lua_State *state) {
   void *hookContext = nullptr;
   {
     std::scoped_lock lock(session->metadataMutex);
-    if (session->state != state ||
+    if (session->state != mainState ||
         session->phase.load(std::memory_order_acquire) !=
             lua_sf::detail_internal::LuaStatePhase::running)
       return 0;
@@ -538,12 +750,13 @@ extern "C" LUASF_API int LuaSF_enter_state(lua_State *state) {
   }
   try {
     lua_sf::detail_internal::enteredSessions.push_back(
-        {state, session, leaveHook, hookContext, enterHook == nullptr});
+        {mainState, state, session, leaveHook, hookContext,
+         enterHook == nullptr});
   } catch (const std::bad_alloc &) {
     return 0;
   }
   if (enterHook != nullptr) {
-    if (enterHook(state, hookContext) == 0) {
+    if (enterHook(mainState, hookContext) == 0) {
       lua_sf::detail_internal::enteredSessions.pop_back();
       return 0;
     }
@@ -552,7 +765,7 @@ extern "C" LUASF_API int LuaSF_enter_state(lua_State *state) {
   }
   {
     std::scoped_lock lock(session->metadataMutex);
-    if (session->state == state &&
+    if (session->state == mainState &&
         session->phase.load(std::memory_order_acquire) ==
             lua_sf::detail_internal::LuaStatePhase::running)
       return 1;
@@ -563,14 +776,17 @@ extern "C" LUASF_API int LuaSF_enter_state(lua_State *state) {
   if (entered.usesFallback)
     session->fallbackExecutionMutex.unlock();
   else
-    entered.leaveHook(state, entered.hookContext);
+    entered.leaveHook(mainState, entered.hookContext);
   return 0;
 }
 
 extern "C" LUASF_API int LuaSF_try_enter_state(lua_State *state) noexcept {
   try {
-    const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session =
-        lua_sf::detail_internal::tryFindSession(state);
+    const lua_sf::detail_internal::ResolvedSession resolved =
+        lua_sf::detail_internal::tryResolveSession(state);
+    lua_State *mainState = resolved.mainState;
+    const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> &session =
+        resolved.session;
     if (session == nullptr)
       return 0;
     LuaSFStateTryEnterHook tryEnterHook = nullptr;
@@ -580,7 +796,7 @@ extern "C" LUASF_API int LuaSF_try_enter_state(lua_State *state) noexcept {
       std::unique_lock lock(session->metadataMutex, std::try_to_lock);
       if (!lock.owns_lock())
         return 0;
-      if (session->state != state ||
+      if (session->state != mainState ||
           session->phase.load(std::memory_order_acquire) !=
               lua_sf::detail_internal::LuaStatePhase::running)
         return 0;
@@ -592,9 +808,10 @@ extern "C" LUASF_API int LuaSF_try_enter_state(lua_State *state) noexcept {
         lua_sf::detail_internal::enteredSessions.size())
       return 0;
     lua_sf::detail_internal::enteredSessions.push_back(
-        {state, session, leaveHook, hookContext, tryEnterHook == nullptr});
+        {mainState, state, session, leaveHook, hookContext,
+         tryEnterHook == nullptr});
     if (tryEnterHook != nullptr) {
-      if (tryEnterHook(state, hookContext) == 0) {
+      if (tryEnterHook(mainState, hookContext) == 0) {
         lua_sf::detail_internal::enteredSessions.pop_back();
         return 0;
       }
@@ -620,7 +837,7 @@ extern "C" LUASF_API int LuaSF_try_enter_state(lua_State *state) noexcept {
     if (entered.usesFallback)
       session->fallbackExecutionMutex.unlock();
     else
-      entered.leaveHook(state, entered.hookContext);
+      entered.leaveHook(mainState, entered.hookContext);
     return 0;
   } catch (...) {
     return 0;
@@ -628,16 +845,20 @@ extern "C" LUASF_API int LuaSF_try_enter_state(lua_State *state) noexcept {
 }
 
 extern "C" LUASF_API void LuaSF_leave_state(lua_State *state) noexcept {
-  if (lua_sf::detail_internal::enteredSessions.empty() ||
-      lua_sf::detail_internal::enteredSessions.back().state != state)
+  if (lua_sf::detail_internal::enteredSessions.empty())
     return;
+  const lua_sf::detail_internal::EnteredSession &active =
+      lua_sf::detail_internal::enteredSessions.back();
+  if (state != active.state && state != active.requestedState)
+    return;
+  lua_State *mainState = active.state;
   lua_sf::detail_internal::EnteredSession entered =
       std::move(lua_sf::detail_internal::enteredSessions.back());
   lua_sf::detail_internal::enteredSessions.pop_back();
   if (entered.usesFallback)
     entered.session->fallbackExecutionMutex.unlock();
   else
-    entered.leaveHook(state, entered.hookContext);
+    entered.leaveHook(mainState, entered.hookContext);
 }
 
 extern "C" LUASF_API int
@@ -645,22 +866,27 @@ LuaSF_take_deferred_callback_error(lua_State *state, char *buffer,
                                    std::size_t capacity) {
   if (state == nullptr || buffer == nullptr || capacity == 0)
     return 0;
-  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session =
-      lua_sf::detail_internal::findSession(state);
+  const lua_sf::detail_internal::ResolvedSession resolved =
+      lua_sf::detail_internal::resolveSession(state);
+  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     return 0;
   return session->deferredCallbackErrors.dequeue(buffer, capacity) ? 1 : 0;
 }
 
 extern "C" LUASF_API void LuaSF_quiesce_state(lua_State *state) noexcept {
-  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session =
-      lua_sf::detail_internal::findSession(state);
+  const lua_sf::detail_internal::ResolvedSession resolved =
+      lua_sf::detail_internal::findResolvedSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     return;
   std::unordered_map<const void *, lua_sf::LuaStateQuiesceCallback> callbacks;
   {
     std::scoped_lock lock(session->metadataMutex);
-    if (session->state != state || session->quiescing)
+    if (session->state != mainState || session->quiescing)
       return;
     session->quiescing = true;
     callbacks.swap(session->quiesceCallbacks);
@@ -672,12 +898,15 @@ extern "C" LUASF_API void LuaSF_quiesce_state(lua_State *state) noexcept {
 }
 
 extern "C" LUASF_API void LuaSF_shutdown_state(lua_State *state) {
-  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> session =
-      lua_sf::detail_internal::findSession(state);
+  const lua_sf::detail_internal::ResolvedSession resolved =
+      lua_sf::detail_internal::resolveSession(state);
+  lua_State *mainState = resolved.mainState;
+  const std::shared_ptr<lua_sf::detail_internal::LuaStateSession> &session =
+      resolved.session;
   if (session == nullptr)
     return;
-  LuaSF_quiesce_state(state);
-  lua_sf::LuaStateExecutionScope execution(state);
+  LuaSF_quiesce_state(mainState);
+  lua_sf::LuaStateExecutionScope execution(mainState);
   if (!execution.active())
     return;
   lua_sf::detail_internal::LuaStatePhase expected =
@@ -690,15 +919,23 @@ extern "C" LUASF_API void LuaSF_shutdown_state(lua_State *state) {
     std::scoped_lock lock(session->metadataMutex);
     session->retainedObjects.clear();
     for (const int reference : session->registryReferences)
-      luaL_unref(state, LUA_REGISTRYINDEX, reference);
+      luaL_unref(mainState, LUA_REGISTRYINDEX, reference);
     session->registryReferences.clear();
     session->state = nullptr;
     session->phase.store(lua_sf::detail_internal::LuaStatePhase::stopped,
                          std::memory_order_release);
   }
   std::scoped_lock lock(lua_sf::detail_internal::sessionsMutex);
-  const auto item = lua_sf::detail_internal::sessions.find(state);
+  const auto item = lua_sf::detail_internal::sessions.find(mainState);
   if (item != lua_sf::detail_internal::sessions.end() &&
-      item->second == session)
+      item->second == session) {
+    for (auto alias = lua_sf::detail_internal::stateAliases.begin();
+         alias != lua_sf::detail_internal::stateAliases.end();) {
+      if (alias->second == mainState)
+        alias = lua_sf::detail_internal::stateAliases.erase(alias);
+      else
+        ++alias;
+    }
     lua_sf::detail_internal::sessions.erase(item);
+  }
 }

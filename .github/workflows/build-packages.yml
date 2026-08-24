@@ -1,14 +1,11 @@
-name: Build tagged packages
+name: Build packages
 
-run-name: Build LuaSF packages for ${{ inputs.tag }}
+run-name: Build LuaSF packages for ${{ github.ref_name }} @ ${{ github.sha }}
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Git tag to build
-        required: true
-        type: string
+  push:
+    branches:
+      - '**'
 
 permissions:
   contents: read
@@ -21,23 +18,20 @@ jobs:
     env:
       CMAKE_GENERATOR: Visual Studio 17 2022
       CMAKE_GENERATOR_PLATFORM: x64
-      REQUESTED_TAG: ${{ inputs.tag }}
 
     steps:
-      - name: Checkout requested tag
+      - name: Checkout triggering commit
         uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate tag build scripts
+      - name: Validate checkout and build scripts
         shell: pwsh
         run: |
-          $tagCommit = (git rev-list -n 1 "refs/tags/$env:REQUESTED_TAG").Trim()
           $headCommit = (git rev-parse HEAD).Trim()
-          if ($tagCommit -ne $headCommit) {
-              throw "HEAD does not match tag '$env:REQUESTED_TAG'."
+          if ($headCommit -ne $env:GITHUB_SHA) {
+              throw "HEAD '$headCommit' does not match triggering commit '$env:GITHUB_SHA'."
           }
 
           $requiredScripts = @(
@@ -48,7 +42,7 @@ jobs:
           )
           $missingScripts = @($requiredScripts | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
           if ($missingScripts.Count -ne 0) {
-              throw "Tag '$env:REQUESTED_TAG' is missing required scripts: $($missingScripts -join ', ')"
+              throw "Triggering commit is missing required scripts: $($missingScripts -join ', ')"
           }
 
       - name: Set up Python 3.12 x64
@@ -130,17 +124,15 @@ jobs:
     timeout-minutes: 120
     env:
       CMAKE_OSX_ARCHITECTURES: arm64
-      REQUESTED_TAG: ${{ inputs.tag }}
 
     steps:
-      - name: Checkout requested tag
+      - name: Checkout triggering commit
         uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate Apple Silicon runner and tag
+      - name: Validate Apple Silicon runner, checkout, and build scripts
         shell: bash
         run: |
           set -euo pipefail
@@ -150,16 +142,15 @@ jobs:
               exit 1
           fi
 
-          tag_commit=$(git rev-list -n 1 "refs/tags/$REQUESTED_TAG")
           head_commit=$(git rev-parse HEAD)
-          if [ "$tag_commit" != "$head_commit" ]; then
-              echo "HEAD does not match tag '$REQUESTED_TAG'." >&2
+          if [ "$head_commit" != "$GITHUB_SHA" ]; then
+              echo "HEAD '$head_commit' does not match triggering commit '$GITHUB_SHA'." >&2
               exit 1
           fi
 
           for script in init.sh build.sh collect_result.sh pack_result.sh; do
               if [ ! -f "$script" ]; then
-                  echo "Tag '$REQUESTED_TAG' is missing required script: $script" >&2
+                  echo "Triggering commit is missing required script: $script" >&2
                   exit 1
               fi
           done

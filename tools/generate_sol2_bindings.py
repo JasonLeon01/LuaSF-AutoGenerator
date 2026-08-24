@@ -14,7 +14,10 @@ try:
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
         CallbackCodec,
+        CPP_BUILTIN_TYPES,
         ConfiguredBinding,
+        CONFIGURED_METHOD_OVERRIDES,
+        ConfiguredMethodOverride,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
         IGNORE_RETURN_TYPES,
@@ -26,10 +29,7 @@ try:
         NUMBER_TYPES,
         NUMERIC_ARRAY_TYPES,
         OPERATOR_META_FUNCTIONS,
-        OUTPUT_ARRAY_COUNT_REF_NAMES,
-        OUTPUT_REF_FUNCTIONS,
-        OUTPUT_REF_NAMES,
-        SHADER_UNIFORM_ARRAY_BINDINGS,
+        OUTPUT_REFERENCE_POLICIES,
         SIZE_TYPE_NAMES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
@@ -41,7 +41,9 @@ try:
         TypeRef,
         clean_cpp_type,
         get_callback_codec,
+        get_configured_method_override,
         get_lifecycle,
+        get_output_reference_policy,
         is_anonymous_cpp_name,
         packet_io_info,
         param_info_memory,
@@ -51,10 +53,13 @@ try:
         render_ll_reset,
         render_ll_stream_ctor,
         render_ll_stream_open,
-        render_shader_uniform_array,
         render_template,
         sanitize_identifier,
         set_public_type_aliases,
+        skipped_class_binding_reason,
+        validate_callback_codec_registry,
+        validate_configured_method_override_registry,
+        validate_output_reference_policy_registry,
         walk_declarations,
     )
 except ImportError:
@@ -63,7 +68,10 @@ except ImportError:
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
         CallbackCodec,
+        CPP_BUILTIN_TYPES,
         ConfiguredBinding,
+        CONFIGURED_METHOD_OVERRIDES,
+        ConfiguredMethodOverride,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
         IGNORE_RETURN_TYPES,
@@ -75,10 +83,7 @@ except ImportError:
         NUMBER_TYPES,
         NUMERIC_ARRAY_TYPES,
         OPERATOR_META_FUNCTIONS,
-        OUTPUT_ARRAY_COUNT_REF_NAMES,
-        OUTPUT_REF_FUNCTIONS,
-        OUTPUT_REF_NAMES,
-        SHADER_UNIFORM_ARRAY_BINDINGS,
+        OUTPUT_REFERENCE_POLICIES,
         SIZE_TYPE_NAMES,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
@@ -90,7 +95,9 @@ except ImportError:
         TypeRef,
         clean_cpp_type,
         get_callback_codec,
+        get_configured_method_override,
         get_lifecycle,
+        get_output_reference_policy,
         is_anonymous_cpp_name,
         packet_io_info,
         param_info_memory,
@@ -100,10 +107,13 @@ except ImportError:
         render_ll_reset,
         render_ll_stream_ctor,
         render_ll_stream_open,
-        render_shader_uniform_array,
         render_template,
         sanitize_identifier,
         set_public_type_aliases,
+        skipped_class_binding_reason,
+        validate_callback_codec_registry,
+        validate_configured_method_override_registry,
+        validate_output_reference_policy_registry,
         walk_declarations,
     )
 
@@ -120,8 +130,19 @@ class StubSignature:
     returns: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class StdFunctionType:
+    """Parsed representation of one ``std::function<R(Args...)>`` type."""
+
+    signature: str
+    return_type: str
+    argument_types: tuple[str, ...]
+    qualifiers: str = ""
+
+
 @dataclass
 class OutputArray:
+    parameter_index: int
     buffer_name: str
 
 
@@ -132,7 +153,7 @@ class PlannedCall:
     call_args: list[str] = field(default_factory=list)
     post_values: list[str] = field(default_factory=list)
     output_arrays: list[OutputArray] = field(default_factory=list)
-    output_count_values: list[str] = field(default_factory=list)
+    output_count_values: dict[int, str] = field(default_factory=dict)
     stub_param_types: dict[str, str] = field(default_factory=dict)
     signature_key: tuple[str, ...] = field(default_factory=tuple)
     unsupported: str | None = None
@@ -187,16 +208,7 @@ def is_reference(value: str) -> bool:
 
 def is_output_reference(value: str) -> bool:
     value = clean_cpp_type(value)
-    return value.endswith("&") and not is_const_type(value)
-
-
-def should_treat_as_output_reference(value: str, name: str, function_name: str) -> bool:
-    if not is_output_reference(value):
-        return False
-    short_function_name = function_name.split("::")[-1]
-    if name in {"received", "sent"}:
-        return True
-    return short_function_name in OUTPUT_REF_FUNCTIONS and name in OUTPUT_REF_NAMES
+    return value.endswith("&") and not value.endswith("&&") and not is_const_type(value)
 
 
 def is_sf_string(value: str) -> bool:
@@ -277,12 +289,77 @@ def optional_element(value: str) -> str | None:
     return args[0] if args else None
 
 
-def std_function_signature(type_ref: TypeRef) -> str | None:
+def parse_callable_signature(signature: str) -> StdFunctionType | None:
+    """Parse a C++ function type without confusing nested template/function args."""
+
+    signature = clean_cpp_type(signature)
+    angle_depth = 0
+    square_depth = 0
+    argument_start = -1
+    for index, ch in enumerate(signature):
+        if ch == "<":
+            angle_depth += 1
+        elif ch == ">":
+            angle_depth = max(0, angle_depth - 1)
+        elif ch == "[":
+            square_depth += 1
+        elif ch == "]":
+            square_depth = max(0, square_depth - 1)
+        elif ch == "(" and angle_depth == 0 and square_depth == 0:
+            argument_start = index
+            break
+
+    if argument_start <= 0:
+        return None
+
+    paren_depth = 0
+    argument_end = -1
+    for index in range(argument_start, len(signature)):
+        ch = signature[index]
+        if ch == "(":
+            paren_depth += 1
+        elif ch == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                argument_end = index
+                break
+
+    qualifiers = signature[argument_end + 1 :].strip() if argument_end != -1 else ""
+    if argument_end == -1 or qualifiers not in {"", "noexcept"}:
+        return None
+
+    return_type = clean_cpp_type(signature[:argument_start])
+    if not return_type:
+        return None
+    arguments = split_cpp_arguments(signature[argument_start + 1 : argument_end])
+    if arguments == ["void"]:
+        arguments = []
+    if any(not argument or argument == "void" for argument in arguments):
+        return None
+    normalized_signature = clean_cpp_type(
+        f"{return_type}({', '.join(arguments)})"
+    )
+    if qualifiers:
+        normalized_signature += f" {qualifiers}"
+    return StdFunctionType(
+        signature=normalized_signature,
+        return_type=return_type,
+        argument_types=tuple(arguments),
+        qualifiers=qualifiers,
+    )
+
+
+def parse_std_function(type_ref: TypeRef) -> StdFunctionType | None:
     for candidate in (type_ref.cpp, type_ref.source, type_ref.canonical_cpp):
         compact = clean_cpp_type(candidate)
-        start = compact.find("std::function")
-        if start == -1:
+        while compact.endswith("&&") or compact.endswith("&"):
+            compact = compact[:-2] if compact.endswith("&&") else compact[:-1]
+            compact = compact.strip()
+        compact = re.sub(r"^(?:(?:const|volatile)\s+)+", "", compact)
+        start_match = re.match(r"std::function\s*<", compact)
+        if not start_match:
             continue
+        start = start_match.start()
         lt_pos = compact.find("<", start)
         if lt_pos == -1:
             continue
@@ -294,23 +371,38 @@ def std_function_signature(type_ref: TypeRef) -> str | None:
             elif ch == ">":
                 depth -= 1
                 if depth == 0:
+                    remainder = compact[index + 1 :].strip()
+                    if remainder and not re.fullmatch(
+                        r"(?:(?:const|volatile)\s*)+",
+                        remainder,
+                    ):
+                        break
                     signature = compact[lt_pos + 1 : index].strip()
-                    signature = re.sub(r"\s+", " ", signature)
-                    signature = signature.replace(" *", "*").replace("* ", "*")
-                    signature = signature.replace(" &", "&").replace("& ", "&")
-                    signature = re.sub(r"\s+\(", "(", signature, count=1)
-                    signature = signature.replace("( ", "(").replace(" )", ")")
-                    signature = signature.replace(" ,", ",")
-                    if "void*" in signature or "const void*" in signature:
-                        signature = signature.replace("unsigned long long", "std::size_t")
-                    if "sf::Text::ShapedGlyph" in signature:
-                        signature = signature.replace("unsigned int&", "std::uint32_t&")
-                    return signature
+                    parsed = parse_callable_signature(signature)
+                    if parsed:
+                        return parsed
     return None
 
 
+def std_function_signature(type_ref: TypeRef) -> str | None:
+    parsed = parse_std_function(type_ref)
+    return parsed.signature if parsed else None
+
+
+def has_std_function_type(type_ref: TypeRef) -> bool:
+    for candidate in (type_ref.cpp, type_ref.source, type_ref.canonical_cpp):
+        compact = clean_cpp_type(candidate)
+        while compact.endswith("&&") or compact.endswith("&"):
+            compact = compact[:-2] if compact.endswith("&&") else compact[:-1]
+            compact = compact.strip()
+        compact = re.sub(r"^(?:(?:const|volatile)\s+)+", "", compact)
+        if re.match(r"std::function\s*<", compact):
+            return True
+    return False
+
+
 def is_std_function(type_ref: TypeRef) -> bool:
-    return std_function_signature(type_ref) is not None
+    return has_std_function_type(type_ref)
 
 
 def resolve_callback_codec(
@@ -334,7 +426,7 @@ def callback_codec_for_alias(qualified_alias: str) -> CallbackCodec | None:
     matches = [
         callback_codec
         for callback_codec in CALLBACK_CODEC_REGISTRY
-        if clean_cpp_type(callback_codec.native_callable) == qualified_alias
+        if clean_cpp_type(callback_codec.selector.semantic_alias) == qualified_alias
     ]
     if len(matches) > 1:
         raise ValueError(f"ambiguous callback codec alias selector: {qualified_alias}")
@@ -346,7 +438,138 @@ def canonical_std_function_type(type_ref: TypeRef) -> str:
     return clean_cpp_type(f"std::function<{signature}>") if signature else ""
 
 
+def canonical_std_function(type_ref: TypeRef) -> StdFunctionType | None:
+    canonical = type_ref.canonical_cpp
+    if not canonical:
+        return parse_std_function(type_ref)
+    return parse_std_function(TypeRef(spelling=canonical, canonical=canonical))
+
+
+def strip_top_level_cvref(value: str) -> str:
+    value = clean_cpp_type(value)
+    while value.endswith("&&") or value.endswith("&"):
+        value = value[:-2] if value.endswith("&&") else value[:-1]
+        value = value.strip()
+    previous = None
+    while value != previous:
+        previous = value
+        value = re.sub(r"^(?:const|volatile)\s+", "", value)
+        value = re.sub(r"\s+(?:const|volatile)$", "", value)
+    return clean_cpp_type(value)
+
+
+def generic_callback_native_type(type_ref: TypeRef) -> str:
+    semantic_type = strip_top_level_cvref(type_ref.cpp)
+    parsed = None
+    if semantic_type.startswith("std::function<"):
+        parsed = parse_std_function(
+            TypeRef(spelling=semantic_type, canonical=semantic_type)
+        )
+    parsed = parsed or canonical_std_function(type_ref) or parse_std_function(type_ref)
+    return clean_cpp_type(f"std::function<{parsed.signature}>") if parsed else ""
+
+
+def callback_value_lua_type(cpp_type: str) -> str:
+    base = strip_top_level_cvref(cpp_type)
+    element = vector_element(base)
+    if element:
+        element_lua_type = callback_value_lua_type(element)
+        if "|" in element_lua_type:
+            element_lua_type = f"({element_lua_type})"
+        return f"{element_lua_type}[]"
+    element = optional_element(base)
+    if element:
+        element_lua_type = callback_value_lua_type(element)
+        if element_lua_type.endswith("|nil"):
+            return element_lua_type
+        return f"{element_lua_type}|nil"
+    if base in {"std::wstring", "wstring"}:
+        return "string"
+    if base == "std::byte":
+        return "integer"
+    return cpp_type_to_lua_type(base)
+
+
+def generic_callback_value_issue(cpp_type: str, *, is_return: bool, path: str) -> str | None:
+    value = clean_cpp_type(cpp_type)
+    if value.endswith("&&"):
+        return f"{path} is an rvalue reference ({value})"
+    if value.endswith("&"):
+        without_ref = value[:-1].strip()
+        top_level_const = bool(
+            re.match(r"^const\b", without_ref)
+            or re.search(r"\bconst$", without_ref)
+        )
+        if is_return:
+            return f"{path} is a reference return ({value})"
+        if not top_level_const:
+            return f"{path} is a writable reference ({value})"
+
+    base = strip_top_level_cvref(value)
+    if "*" in base:
+        role = "return" if is_return else "parameter"
+        return f"{path} is a raw-pointer {role} ({value})"
+    if "[" in base or "]" in base:
+        return f"{path} is an array type ({value})"
+    if base.startswith("std::function<"):
+        return f"{path} is a nested std::function ({value})"
+    if is_return and base in {
+        "std::string_view",
+        "string_view",
+        "std::wstring_view",
+        "wstring_view",
+    }:
+        return f"{path} is a borrowed string-view return ({value})"
+
+    element = vector_element(base)
+    if element:
+        return generic_callback_value_issue(
+            element,
+            is_return=is_return,
+            path=f"{path}.vectorElement",
+        )
+    element = optional_element(base)
+    if element:
+        return generic_callback_value_issue(
+            element,
+            is_return=is_return,
+            path=f"{path}.optionalValue",
+        )
+
+    if base == "void":
+        return None if is_return else f"{path} cannot have type void"
+    if callback_value_lua_type(base) == "any" and base not in {"sol::object", "sol::table"}:
+        return f"{path} has no ordinary Lua conversion ({value})"
+    return None
+
+
+def generic_callback_issue(type_ref: TypeRef) -> str | None:
+    parsed = canonical_std_function(type_ref) or parse_std_function(type_ref)
+    if not parsed:
+        return "could not parse std::function<R(Args...)>"
+    if parsed.qualifiers:
+        return f"callable has unsupported qualifier {parsed.qualifiers!r}"
+
+    issue = generic_callback_value_issue(
+        parsed.return_type,
+        is_return=True,
+        path="returnType",
+    )
+    if issue:
+        return issue
+    for index, argument in enumerate(parsed.argument_types, start=1):
+        issue = generic_callback_value_issue(
+            argument,
+            is_return=False,
+            path=f"argument[{index}]",
+        )
+        if issue:
+            return issue
+    return None
+
+
 def validate_callback_codecs_against_api(api: dict[str, Any]) -> None:
+    validate_callback_codec_registry()
     declarations = list(
         declaration
         for file_item in api.get("files", [])
@@ -424,11 +647,246 @@ def validate_callback_codecs_against_api(api: dict[str, Any]) -> None:
                     f"expected {expected_canonical}, got {actual_canonical}"
                 )
 
+    # Classify every exposed callback independently of today's SFML function
+    # names.  A future ordinary callback therefore works automatically, while
+    # a signature with pointer/reference/lifetime semantics cannot be silently
+    # emitted through the generic bridge.
+    for declaration in declarations:
+        qualified_name = clean_cpp_type(declaration.get("qualified_name") or "")
+        if declaration.get("kind") in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}:
+            type_ref = TypeRef.from_json(declaration.get("type"))
+            if is_std_function(type_ref) and not callback_codec_for_alias(qualified_name):
+                issue = generic_callback_issue(type_ref)
+                if issue:
+                    raise ValueError(
+                        f"std::function alias {qualified_name!r} requires a special callback codec: {issue}"
+                    )
+
+        for index, parameter in enumerate(declaration.get("parameters", [])):
+            type_ref = TypeRef.from_json(parameter.get("type"))
+            if not is_std_function(type_ref):
+                continue
+            parameter_name = parameter.get("name") or f"arg{index}"
+            callback_codec = resolve_callback_codec(
+                type_ref,
+                qualified_name,
+                parameter_name,
+            )
+            if callback_codec:
+                if "fromLua" not in callback_codec.directions:
+                    raise ValueError(
+                        f"callback codec {callback_codec.name!r} does not support fromLua for "
+                        f"{qualified_name}.{parameter_name}"
+                    )
+                continue
+            issue = generic_callback_issue(type_ref)
+            if issue:
+                raise ValueError(
+                    f"std::function parameter {qualified_name}.{parameter_name} requires a "
+                    f"special callback codec: {issue}"
+                )
+
+
+def parameter_type_signature(params: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Return the exact normalized native parameter signature used by registries."""
+    return tuple(
+        clean_cpp_type(TypeRef.from_json(param.get("type")).cpp)
+        for param in params
+    )
+
+
+def is_writable_lvalue_reference(type_ref: TypeRef) -> bool:
+    """True only for a non-const ``T&``; an rvalue reference is never an output."""
+    cpp = clean_cpp_type(type_ref.cpp)
+    if type_ref.kind and type_ref.kind != "LVALUEREFERENCE":
+        return False
+    return cpp.endswith("&") and not cpp.endswith("&&") and not is_const_type(cpp)
+
+
+def is_value_like_writable_reference(type_ref: TypeRef) -> bool:
+    """Whether a writable reference needs explicit output semantics.
+
+    Bound usertypes deliberately remain direct Lua input objects.  Types that
+    already cross the ordinary conversion layer by value cannot safely be
+    passed as a writable C++ reference without a declared output policy.
+    """
+    if not is_writable_lvalue_reference(type_ref):
+        return False
+    base = remove_cvref(type_ref.cpp)
+    return (
+        base in CPP_BUILTIN_TYPES
+        or base in BYTE_TYPES
+        or base in STRING_TYPES
+        or is_sf_string(base)
+        or is_std_string(base)
+        or is_std_wstring(base)
+        or is_string_view(base)
+        or is_filesystem_path(base)
+        or vector_element(base) is not None
+        or optional_element(base) is not None
+        or is_window_handle(type_ref)
+    )
+
+
+def validate_configured_method_overrides_against_api(api: dict[str, Any]) -> None:
+    """Fail if an exact helper override drifts from the extracted native API."""
+    validate_configured_method_override_registry()
+    methods_by_name: dict[str, list[dict[str, Any]]] = {}
+    for file_item in api.get("files", []):
+        for declaration in walk_declarations(file_item.get("declarations", [])):
+            if declaration.get("kind") != "CXX_METHOD":
+                continue
+            qualified_name = clean_cpp_type(declaration.get("qualified_name") or "")
+            if qualified_name:
+                methods_by_name.setdefault(qualified_name, []).append(declaration)
+
+    for override in CONFIGURED_METHOD_OVERRIDES:
+        selector = clean_cpp_type(override.qualified_function)
+        methods = methods_by_name.get(selector, [])
+        if len(methods) != len(override.variants):
+            raise ValueError(
+                f"configured method override {selector!r} expected "
+                f"{len(override.variants)} native overloads, found {len(methods)}"
+            )
+
+        actual_signatures = [
+            parameter_type_signature(method.get("parameters", []))
+            for method in methods
+        ]
+        expected_signatures = [
+            tuple(
+                clean_cpp_type(parameter_type.replace("{element}", variant.cpp_type))
+                for parameter_type in override.native_parameter_types
+            )
+            for variant in override.variants
+        ]
+        actual_return_types = [
+            clean_cpp_type(TypeRef.from_json(method.get("return_type")).cpp)
+            for method in methods
+        ]
+        expected_return_type = clean_cpp_type(override.native_return_type)
+        if (
+            actual_signatures != expected_signatures
+            or any(return_type != expected_return_type for return_type in actual_return_types)
+        ):
+            raise ValueError(
+                f"configured method override {selector!r} native overload drift: "
+                f"expected {expected_signatures} -> {expected_return_type}, got "
+                f"{actual_signatures} -> {actual_return_types}"
+            )
+
+
+def validate_output_reference_policies_against_api(api: dict[str, Any]) -> None:
+    """Validate exact overload selectors and every declared output relation."""
+    validate_output_reference_policy_registry()
+    declarations: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = {}
+    for file_item in api.get("files", []):
+        for declaration in walk_declarations(file_item.get("declarations", [])):
+            if not declaration.get("parameters"):
+                continue
+            key = (
+                clean_cpp_type(declaration.get("qualified_name") or ""),
+                parameter_type_signature(declaration.get("parameters", [])),
+            )
+            declarations.setdefault(key, []).append(declaration)
+
+    for policy in OUTPUT_REFERENCE_POLICIES:
+        key = (
+            clean_cpp_type(policy.qualified_function),
+            tuple(clean_cpp_type(value) for value in policy.parameter_types),
+        )
+        matches = declarations.get(key, [])
+        if len(matches) != 1:
+            raise ValueError(
+                f"output-reference policy {key[0]}{key[1]} expected exactly one "
+                f"native overload, found {len(matches)}"
+            )
+        params = matches[0].get("parameters", [])
+        for output in policy.outputs:
+            param = params[output.index]
+            actual_name = param.get("name") or f"arg{output.index}"
+            type_ref = TypeRef.from_json(param.get("type"))
+            if actual_name != output.expected_name:
+                raise ValueError(
+                    f"output-reference policy {key[0]}{key[1]} parameter "
+                    f"{output.index} name drift: expected {output.expected_name!r}, "
+                    f"got {actual_name!r}"
+                )
+            if not is_writable_lvalue_reference(type_ref):
+                raise ValueError(
+                    f"output-reference policy {key[0]}{key[1]} parameter "
+                    f"{output.index} must be a writable lvalue reference, got {type_ref.cpp!r}"
+                )
+            if output.count_for_array_parameter is not None:
+                buffer_index = output.count_for_array_parameter
+                buffer_type = TypeRef.from_json(params[buffer_index].get("type"))
+                if (
+                    not is_pointer(buffer_type.cpp)
+                    or is_const_type(buffer_type.cpp)
+                    or buffer_index + 1 >= len(params)
+                    or not is_size_type(TypeRef.from_json(params[buffer_index + 1].get("type")))
+                    or remove_cvref(type_ref.cpp) not in INTEGER_TYPES
+                ):
+                    raise ValueError(
+                        f"output-reference policy {key[0]}{key[1]} has an invalid "
+                        f"count relation from parameter {output.index} to buffer {buffer_index}"
+                    )
+
+
+def validate_writable_references_against_api(api: dict[str, Any]) -> None:
+    """Reject value-converted ``T&`` parameters without explicit semantics."""
+    for file_item in api.get("files", []):
+        for declaration in walk_declarations(file_item.get("declarations", [])):
+            name = declaration.get("name") or ""
+            qualified_name = clean_cpp_type(declaration.get("qualified_name") or "")
+            if (
+                not declaration.get("parameters")
+                or declaration.get("deleted")
+                or declaration.get("access") not in (None, "public")
+                or name in IGNORE_NAMES
+                or name.startswith("operator")
+                or "::priv::" in qualified_name
+            ):
+                continue
+
+            params = declaration.get("parameters", [])
+            policy = get_output_reference_policy(
+                qualified_name,
+                parameter_type_signature(params),
+            )
+            policy_indices = {output.index for output in policy.outputs} if policy else set()
+            for index, param in enumerate(params):
+                if index in policy_indices:
+                    continue
+                type_ref = TypeRef.from_json(param.get("type"))
+                if is_value_like_writable_reference(type_ref):
+                    parameter_name = param.get("name") or f"arg{index}"
+                    raise ValueError(
+                        f"writable value-like reference {qualified_name}.{parameter_name} "
+                        f"({type_ref.cpp}) requires an exact OutputReferencePolicy"
+                    )
+
 
 def callback_from_object_expr(callback_codec: CallbackCodec, name: str, label: str) -> str:
+    allow_nil = "true" if callback_codec.allow_nil else "false"
     return (
         f"lua_sf::callback::from_object<{callback_codec.native_callable}, "
-        f"{callback_codec.codec}>({name}, {cpp_string_literal(label)})"
+        f"{callback_codec.codec}>({name}, lua_sf::callback::CallbackOptions{{"
+        f"{cpp_string_literal(label)}, {allow_nil}}})"
+    )
+
+
+def generic_callback_from_object_expr(type_ref: TypeRef, name: str, label: str) -> str:
+    issue = generic_callback_issue(type_ref)
+    if issue:
+        raise ValueError(f"unsafe generic callback {label or '<unnamed>'}: {issue}")
+    native_callable = generic_callback_native_type(type_ref)
+    if not native_callable:
+        raise ValueError(f"cannot determine native callback type for {label or '<unnamed>'}")
+    return (
+        f"lua_sf::callback::from_object<{native_callable}, "
+        f"lua_sf::callback::GenericCallbackCodec>({name}, "
+        f"lua_sf::callback::CallbackOptions{{{cpp_string_literal(label)}, false}})"
     )
 
 
@@ -439,31 +897,50 @@ def std_function_lua_type(
 ) -> str:
     signature = std_function_signature(type_ref)
     if not signature:
-        return "fun(...): any"
+        raise ValueError(f"cannot parse std::function type {type_ref.cpp!r}")
     callback_codec = resolve_callback_codec(type_ref, qualified_function, parameter_name)
     if callback_codec:
         suffix = "|nil" if callback_codec.allow_nil else ""
         return callback_codec.lua_type + suffix
 
-    match = re.fullmatch(r"(.+?)\((.*)\)", signature)
-    if not match:
-        return "fun(...): any"
-    return_cpp, args_cpp = match.groups()
-    args = split_cpp_arguments(args_cpp)
+    issue = generic_callback_issue(type_ref)
+    if issue:
+        label = f"{qualified_function}.{parameter_name}".strip(".") or type_ref.cpp
+        raise ValueError(f"unsafe generic callback {label}: {issue}")
+
+    semantic_type = strip_top_level_cvref(type_ref.cpp)
+    if semantic_type and not semantic_type.startswith("std::function<"):
+        return lua_path_for_type(semantic_type)
+
+    parsed = parse_std_function(type_ref)
+    if not parsed:
+        raise ValueError(f"cannot parse callback signature {signature!r}")
+    canonical = canonical_std_function(type_ref)
+    canonical_arguments = (
+        canonical.argument_types
+        if canonical and len(canonical.argument_types) == len(parsed.argument_types)
+        else parsed.argument_types
+    )
     lua_args = [
-        f"arg{index}: {callback_argument_lua_type(arg)}"
-        for index, arg in enumerate(args, start=1)
-        if arg and arg != "void"
+        f"arg{index}: {callback_argument_lua_type(argument, canonical_argument)}"
+        for index, (argument, canonical_argument) in enumerate(
+            zip(parsed.argument_types, canonical_arguments),
+            start=1,
+        )
     ]
-    lua_return = type_ref_to_lua_type(TypeRef(spelling=return_cpp, canonical=return_cpp))
-    suffix = "" if remove_cvref(return_cpp) == "void" else f": {lua_return}"
+    lua_return = callback_argument_lua_type(
+        parsed.return_type,
+        canonical.return_type if canonical else parsed.return_type,
+    )
+    suffix = "" if strip_top_level_cvref(parsed.return_type) == "void" else f": {lua_return}"
     return f"fun({', '.join(lua_args)}){suffix}"
 
 
-def callback_argument_lua_type(cpp_type: str) -> str:
-    if "*" in cpp_type:
-        return "any"
-    return type_ref_to_lua_type(TypeRef(spelling=cpp_type, canonical=cpp_type))
+def callback_argument_lua_type(cpp_type: str, canonical_cpp_type: str = "") -> str:
+    lua_type = callback_value_lua_type(cpp_type)
+    if lua_type == "any" and canonical_cpp_type:
+        lua_type = callback_value_lua_type(canonical_cpp_type)
+    return lua_type
 
 
 def split_cpp_arguments(value: str) -> list[str]:
@@ -569,13 +1046,12 @@ def from_lua_expr(
         return [], f"{name}.native()"
     if base in INTEGER_TYPES:
         return [], f"{name}.value()"
-    signature = std_function_signature(type_ref)
-    if signature:
+    if is_std_function(type_ref):
         callback_codec = resolve_callback_codec(type_ref, qualified_function, parameter_name)
+        label = f"{qualified_function}.{parameter_name}".strip(".")
         if callback_codec:
-            label = f"{qualified_function}.{parameter_name}".strip(".")
             return [], callback_from_object_expr(callback_codec, name, label)
-        return [], f"lua_sf::function_from_object<{signature}>({name})"
+        return [], generic_callback_from_object_expr(type_ref, name, label)
     if is_sf_string(cpp):
         return [], f"lua_sf::to_sf_string({name})"
     if is_std_wstring(cpp):
@@ -708,14 +1184,23 @@ def output_array_resize_lines(plan: PlannedCall, return_type: TypeRef) -> list[s
         return lines
 
     if plan.output_count_values:
-        return output_array_resize_lines_for_count(plan, plan.output_count_values[0])
+        lines: list[str] = []
+        for output in plan.output_arrays:
+            count_expr = plan.output_count_values.get(output.parameter_index)
+            if count_expr is not None:
+                lines.extend(output_array_resize_lines_for_count(plan, count_expr, (output,)))
+        return lines
 
     return []
 
 
-def output_array_resize_lines_for_count(plan: PlannedCall, count_expr: str) -> list[str]:
+def output_array_resize_lines_for_count(
+    plan: PlannedCall,
+    count_expr: str,
+    outputs: tuple[OutputArray, ...] | None = None,
+) -> list[str]:
     lines: list[str] = []
-    for output in plan.output_arrays:
+    for output in outputs or tuple(plan.output_arrays):
         count_name = f"{output.buffer_name}_written"
         lines.append(f"const auto {count_name} = static_cast<std::size_t>({count_expr});")
         lines.append(f"if ({count_name} < {output.buffer_name}.size())")
@@ -838,7 +1323,11 @@ def stub_signature_for_item(
     constructor_return: str | None = None,
 ) -> StubSignature | None:
     params = item.get("parameters", [])
-    plan = plan_parameters(params, item.get("qualified_name") or call_name)
+    plan = plan_parameters(
+        params,
+        item.get("qualified_name") or call_name,
+        declared_params=item.get("_declared_parameters", params),
+    )
     if plan.unsupported:
         return None
 
@@ -1003,9 +1492,24 @@ def overload_specificity_key(plan: PlannedCall, original_index: int) -> tuple[in
     return (object_params, table_params, -len(param_types), original_index)
 
 
-def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> PlannedCall:
+def plan_parameters(
+    params: list[dict[str, Any]],
+    function_name: str = "",
+    *,
+    declared_params: list[dict[str, Any]] | None = None,
+) -> PlannedCall:
     plan = PlannedCall()
     skip_next: set[int] = set()
+    declared_params = declared_params if declared_params is not None else params
+    output_policy = get_output_reference_policy(
+        function_name,
+        parameter_type_signature(declared_params),
+    )
+    output_parameters = (
+        {output.index: output for output in output_policy.outputs}
+        if output_policy is not None
+        else {}
+    )
 
     for index, param in enumerate(params):
         if index in skip_next:
@@ -1021,13 +1525,25 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
         cpp = type_ref.cpp
         next_param = params[index + 1] if index + 1 < len(params) else None
 
-        if should_treat_as_output_reference(cpp, name, function_name):
+        output_parameter = output_parameters.get(index)
+        if output_parameter is not None:
+            if not is_writable_lvalue_reference(type_ref):
+                raise ValueError(
+                    f"output policy parameter {index} is not a writable lvalue reference"
+                )
+            if (param.get("name") or f"arg{index}") != output_parameter.expected_name:
+                raise ValueError(
+                    f"output policy parameter {index} name drifted from "
+                    f"{output_parameter.expected_name!r}"
+                )
             local_type = remove_cvref(cpp)
             plan.prelude.append(f"{local_type} {name}{{}};")
             plan.call_args.append(name)
             plan.post_values.append(f"std::move({name})")
-            if name in OUTPUT_ARRAY_COUNT_REF_NAMES and local_type in INTEGER_TYPES:
-                plan.output_count_values.append(name)
+            if output_parameter.count_for_array_parameter is not None:
+                plan.output_count_values[
+                    output_parameter.count_for_array_parameter
+                ] = name
             continue
 
         if is_pointer(cpp) and can_be_array_pointer(type_ref, next_param):
@@ -1052,7 +1568,7 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
             plan.prelude.append(f"std::vector<{element}> {name}_buffer({lua_size_name});")
             plan.call_args.append(f"{name}_buffer.data()")
             plan.post_values.append(f"sol::as_table({name}_buffer)")
-            plan.output_arrays.append(OutputArray(f"{name}_buffer"))
+            plan.output_arrays.append(OutputArray(index, f"{name}_buffer"))
             plan.signature_key += (f"outarray:{element}",)
             if has_size_pair:
                 size_type = TypeRef.from_json(next_param.get("type")).cpp
@@ -1070,22 +1586,28 @@ def plan_parameters(params: list[dict[str, Any]], function_name: str = "") -> Pl
             plan.signature_key += ("std::string",)
             continue
 
+        if is_value_like_writable_reference(type_ref):
+            raise ValueError(
+                f"writable value-like reference parameter {index} ({cpp}) requires "
+                "an exact OutputReferencePolicy"
+            )
+
         lua_type = lua_param_type(type_ref)
         parameter_name = param.get("name") or f"arg{index}"
         prelude, expr = from_lua_expr(type_ref, name, function_name, parameter_name)
         plan.lua_params.append(f"{lua_type} {name}")
         plan.prelude.extend(prelude)
         plan.call_args.append(expr)
-        callback_codec = resolve_callback_codec(type_ref, function_name, parameter_name)
-        canonical_stub_type = cpp_type_to_lua_type(type_ref.canonical_cpp)
-        if callback_codec:
+        if is_std_function(type_ref):
             plan.stub_param_types[sanitize_lua_identifier(name)] = std_function_lua_type(
                 type_ref,
                 function_name,
                 parameter_name,
             )
-        elif canonical_stub_type != "any":
-            plan.stub_param_types[sanitize_lua_identifier(name)] = canonical_stub_type
+        else:
+            canonical_stub_type = cpp_type_to_lua_type(type_ref.canonical_cpp)
+            if canonical_stub_type != "any":
+                plan.stub_param_types[sanitize_lua_identifier(name)] = canonical_stub_type
         plan.signature_key += (lua_type,)
 
     return plan
@@ -1099,7 +1621,11 @@ def make_lambda(
     value_constructor: bool = False,
 ) -> tuple[str | None, str | None]:
     params = item.get("parameters", [])
-    plan = plan_parameters(params, item.get("qualified_name") or call_name)
+    plan = plan_parameters(
+        params,
+        item.get("qualified_name") or call_name,
+        declared_params=item.get("_declared_parameters", params),
+    )
     if plan.unsupported:
         return None, plan.unsupported
 
@@ -1123,7 +1649,12 @@ def make_lambda(
 
     if is_constructor:
         if is_memory_lifecycle and param_info_memory(params):
-            return render_ll_memory_ctor(owner_clean, params, plan.lua_params), None
+            return render_ll_memory_ctor(
+                owner_clean,
+                params,
+                plan.lua_params,
+                via_open_from_memory=lifecycle.memory_constructor_via_openfrommemory,
+            ), None
         if is_stream_lifecycle and param_info_stream(params):
             return render_ll_stream_ctor(owner_clean, params), None
         lines.append(f"{capture}({lua_args}) {{")
@@ -1199,7 +1730,7 @@ def make_lambda(
         owner_type
         and is_memory_lifecycle
         and param_info_memory(params)
-        and call_name == "openFromMemory"
+        and call_name == lifecycle.memory_open_method
     ):
         return render_ll_memory_open(owner_clean, params, plan.lua_params, call_target), None
 
@@ -1207,7 +1738,7 @@ def make_lambda(
         owner_type
         and is_stream_lifecycle
         and param_info_stream(params)
-        and call_name == "openFromStream"
+        and call_name == lifecycle.stream_open_method
     ):
         return render_ll_stream_open(owner_clean, params, call_target), None
 
@@ -1321,56 +1852,25 @@ def append_indented_block(lines: list[str], text: str, indent: str, suffix: str 
         lines.append(f"{indent}{line}{line_suffix}")
 
 
-def shader_uniform_array_block(var_name: str, lua_owner: str) -> list[str]:
-    lines: list[str] = []
-
-    for index, binding in enumerate(SHADER_UNIFORM_ARRAY_BINDINGS):
-        macro = "LUASF_STUB_FUNCTION" if index == 0 else "LUASF_STUB_OVERLOAD"
+def configured_method_override_block(
+    override: ConfiguredMethodOverride,
+    var_name: str,
+    lua_owner: str,
+) -> list[str]:
+    """Render one registry-selected helper invocation and its descriptors."""
+    lines = [
+        f"    {override.helper}(",
+        f"        {var_name},",
+        f"        {cpp_string_literal(lua_owner)},",
+        f"        {cpp_string_literal(override.lua_name)},",
+    ]
+    for index, variant in enumerate(override.variants):
+        suffix = "," if index + 1 < len(override.variants) else ""
         lines.append(
-            f'    {macro}({cpp_string_literal(lua_owner)}, "setUniformArray", '
-            f'{cpp_string_literal(f"fun(self: {lua_owner}, name: string, values: {binding["lua"]})")});'
+            f"        {override.variant_factory}<{variant.cpp_type}>("
+            f"{cpp_string_literal(variant.lua_name)}, "
+            f"{cpp_string_literal(variant.lua_type)}){suffix}"
         )
-
-    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
-        lines.append(
-            f'    LUASF_STUB_FUNCTION({cpp_string_literal(lua_owner)}, '
-            f'{cpp_string_literal(binding["method"])}, '
-            f'{cpp_string_literal(f"fun(self: {lua_owner}, name: string, values: {binding["lua"]})")});'
-        )
-
-    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
-        lines.append(f'    auto {binding["local"]} =')
-        append_indented_block(
-            lines,
-            render_shader_uniform_array(binding["cpp"], "values"),
-            "        ",
-            ";",
-        )
-
-    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
-        lines.append(f'    {var_name}.set_function("{binding["method"]}", {binding["local"]});')
-
-    capture_list = ", ".join(binding["local"] for binding in SHADER_UNIFORM_ARRAY_BINDINGS)
-    lines.append(f'    {var_name}.set_function("setUniformArray",')
-    lines.append(f"        [{capture_list}](sf::Shader& self, std::string name, sol::object values) {{")
-    lines.append("            if (values.get_type() != sol::type::table)")
-    lines.append('                throw std::runtime_error("sf.Shader.setUniformArray expects a Lua array");')
-    lines.append("            sol::table table = values.as<sol::table>();")
-    lines.append("            sol::object first = table[1];")
-    lines.append("            if (lua_sf::is_nil_object(first))")
-    lines.append(
-        '                throw std::runtime_error("sf.Shader.setUniformArray cannot infer an empty array; '
-        'use setUniformFloatArray, setUniformVec2Array, setUniformVec3Array, setUniformVec4Array, '
-        'setUniformMat3Array, or setUniformMat4Array");'
-    )
-    for binding in SHADER_UNIFORM_ARRAY_BINDINGS:
-        lines.append(f'            if ({binding["check"]})')
-        lines.append("            {")
-        lines.append(f'                {binding["local"]}(self, name, values);')
-        lines.append("                return;")
-        lines.append("            }")
-    lines.append('            throw std::runtime_error("sf.Shader.setUniformArray received an unsupported array element type");')
-    lines.append("        }")
     lines.append("    );")
     return lines
 
@@ -1430,6 +1930,9 @@ class Sol2Generator:
         self.skipped: list[str] = []
         set_public_type_aliases(api)
         validate_callback_codecs_against_api(api)
+        validate_configured_method_overrides_against_api(api)
+        validate_output_reference_policies_against_api(api)
+        validate_writable_references_against_api(api)
         self.template_map = self._build_template_map()
         self._validate_template_profiles()
         self.specializations, self.alias_specializations = self._build_template_specializations()
@@ -1910,15 +2413,17 @@ class Sol2Generator:
 
     def _emit_class(self, cls: dict[str, Any], table_var: str) -> list[str]:
         full_name = cls.get("qualified_name") or cls.get("name")
+        skipped_class_reason = skipped_class_binding_reason(full_name or "")
         if (
             not full_name
-            or full_name == "sf::String"
+            or skipped_class_reason is not None
             or (
                 full_name.startswith("sf::priv::")
                 and not cls.get("_template_specialization")
             )
         ):
-            return [f"    // Skipped class {full_name}: converted through lua_sf utilities."]
+            reason = skipped_class_reason or "private implementation type"
+            return [f"    // Skipped class {full_name}: {reason}."]
 
         lua_name = cls.get("_lua_name") or lua_leaf_for_type(full_name)
         lua_path = cls.get("_lua_path") or lua_path_for_type(full_name)
@@ -2388,10 +2893,16 @@ class Sol2Generator:
                 continue
             if ctor.get("access") not in (None, "public"):
                 continue
-            for params in constructor_param_sets(ctor.get("parameters", [])):
+            declared_params = ctor.get("parameters", [])
+            for params in constructor_param_sets(declared_params):
                 ctor_item = dict(ctor)
                 ctor_item["parameters"] = params
-                planned = plan_parameters(params, ctor.get("qualified_name") or full_name)
+                ctor_item["_declared_parameters"] = declared_params
+                planned = plan_parameters(
+                    params,
+                    ctor.get("qualified_name") or full_name,
+                    declared_params=declared_params,
+                )
                 if planned.unsupported:
                     self.skipped.append(f"{full_name}::{ctor.get('displayname')}: {planned.unsupported}")
                     continue
@@ -2593,9 +3104,11 @@ class Sol2Generator:
             ],
         ] = {}
         selected_order: list[tuple[str, tuple[str, tuple[str, ...], bool]]] = []
+        emission_order: list[tuple[str, str]] = []
+        emitted_method_names: set[str] = set()
+        configured_overrides: dict[str, ConfiguredMethodOverride] = {}
         lua_owner = lua_path_for_type(full_name)
         operator_methods: list[tuple[dict[str, Any], str]] = []
-        emit_shader_uniform_array = False
         overload_index = 0
 
         inherited_methods = self._inherited_methods_for(cls, full_name)
@@ -2614,17 +3127,29 @@ class Sol2Generator:
             if name.startswith("operator"):
                 operator_methods.append((method, dispatch_type))
                 continue
-            if full_name == "sf::Shader" and name == "setUniformArray":
-                emit_shader_uniform_array = True
+            configured_override = get_configured_method_override(
+                method.get("qualified_name") or ""
+            )
+            if configured_override is not None:
+                selector = clean_cpp_type(configured_override.qualified_function)
+                if selector not in configured_overrides:
+                    configured_overrides[selector] = configured_override
+                    emission_order.append(("override", selector))
                 continue
 
-            for params in constructor_param_sets(method.get("parameters", [])):
+            declared_params = method.get("parameters", [])
+            for params in constructor_param_sets(declared_params):
                 method_item = dict(method)
                 method_item["parameters"] = params
+                method_item["_declared_parameters"] = declared_params
                 inherited = dispatch_type != full_name
                 if inherited:
                     method_item["dispatch_type"] = dispatch_type
-                planned = plan_parameters(params, method.get("qualified_name") or name)
+                planned = plan_parameters(
+                    params,
+                    method.get("qualified_name") or name,
+                    declared_params=declared_params,
+                )
                 if planned.unsupported:
                     skipped_lines.append(f"    // Skipped {full_name}::{method.get('displayname')}: {planned.unsupported}.")
                     continue
@@ -2661,6 +3186,9 @@ class Sol2Generator:
                             returns_reference,
                         )
                         selected_order.append((name, key))
+                        if name not in emitted_method_names:
+                            emitted_method_names.add(name)
+                            emission_order.append(("method", name))
                     elif priority > current[1] or (priority == current[1] and score > current[0]):
                         selected[key] = (
                             score,
@@ -2696,7 +3224,21 @@ class Sol2Generator:
             )
 
         lines: list[str] = []
-        for name, items in grouped.items():
+        for emission_kind, emission_name in emission_order:
+            if emission_kind == "override":
+                lines.extend(
+                    configured_method_override_block(
+                        configured_overrides[emission_name],
+                        var_name,
+                        lua_owner,
+                    )
+                )
+                continue
+
+            name = emission_name
+            items = grouped.get(name, [])
+            if not items:
+                continue
             sorted_items = sorted(items, key=lambda item: item[0])
             lines.extend(stub_doc_lines({"doc": first_stub_doc([item[4] for item in sorted_items])}))
             for i, (
@@ -2723,11 +3265,6 @@ class Sol2Generator:
                     any(item[5] for item in sorted_items),
                 )
             )
-            if emit_shader_uniform_array and full_name == "sf::Shader" and name == "setUniform":
-                lines.extend(shader_uniform_array_block(var_name, lua_owner))
-                emit_shader_uniform_array = False
-        if emit_shader_uniform_array and full_name == "sf::Shader":
-            lines.extend(shader_uniform_array_block(var_name, lua_owner))
         lines.extend(self._emit_operator_methods(var_name, full_name, lua_owner, operator_methods, skipped_lines))
         lines.extend(skipped_lines)
         return lines
@@ -2766,12 +3303,18 @@ class Sol2Generator:
                 skipped_lines.append(f"    // Skipped operator {full_name}::{name}; no sol meta mapping is available.")
                 continue
 
-            for params in constructor_param_sets(method.get("parameters", [])):
+            declared_params = method.get("parameters", [])
+            for params in constructor_param_sets(declared_params):
                 method_item = dict(method)
                 method_item["parameters"] = params
+                method_item["_declared_parameters"] = declared_params
                 if dispatch_type != full_name:
                     method_item["dispatch_type"] = dispatch_type
-                planned = plan_parameters(params, method.get("qualified_name") or name)
+                planned = plan_parameters(
+                    params,
+                    method.get("qualified_name") or name,
+                    declared_params=declared_params,
+                )
                 if planned.unsupported:
                     skipped_lines.append(f"    // Skipped operator {full_name}::{method.get('displayname')}: {planned.unsupported}.")
                     continue
@@ -3060,10 +3603,16 @@ class Sol2Generator:
                 continue
             full_name = f"{namespace_prefix}{name}" if namespace_prefix else (func.get("qualified_name") or name)
 
-            for params in constructor_param_sets(func.get("parameters", [])):
+            declared_params = func.get("parameters", [])
+            for params in constructor_param_sets(declared_params):
                 func_item = dict(func)
                 func_item["parameters"] = params
-                planned = plan_parameters(params, func.get("qualified_name") or full_name)
+                func_item["_declared_parameters"] = declared_params
+                planned = plan_parameters(
+                    params,
+                    func.get("qualified_name") or full_name,
+                    declared_params=declared_params,
+                )
                 if planned.unsupported:
                     skipped_lines.append(f"    // Skipped function {full_name}: {planned.unsupported}.")
                     continue
