@@ -14,13 +14,24 @@ int main()
     if (L == nullptr)
         return 1;
 
-    if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+    int exitCode = 0;
+    if (LuaSF_enter_state(L) == 0)
     {
-        fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
-        lua_close(L);
-        return 1;
+        fprintf(stderr, "Lua error: failed to enter Lua state\n");
+        exitCode = 1;
+    }
+    else
+    {
+        if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
+        {
+            fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
+            exitCode = 1;
+        }
+        LuaSF_leave_state(L);
     }
 
+    LuaSF_quiesce_state(L);
+    LuaSF_shutdown_state(L);
     lua_close(L);
-    return 0;
+    return exitCode;
 }

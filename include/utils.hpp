@@ -3,6 +3,7 @@
 #include "LuaStateLifecycle.hpp"
 #include "luasf_sol.hpp"
 #include <SFML/Audio/PlaybackDevice.hpp>
+#include <SFML/Graphics/Shader.hpp>
 #include <SFML/Graphics/Text.hpp>
 #include <SFML/Network/SocketSelector.hpp>
 #include <SFML/System/String.hpp>
@@ -13,6 +14,7 @@
 #include "LuaCallbackCodec.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -163,6 +166,27 @@ sol::object optional_to_object(sol::state_view lua,
 
 template <typename T>
 sol::object optional_to_object(sol::state_view lua, std::optional<T> &&value);
+
+namespace detail {
+
+template <typename Element> struct ShaderUniformArrayVariant {
+  using element_type = Element;
+
+  std::string methodName;
+  std::string luaArrayType;
+};
+
+template <typename Element>
+ShaderUniformArrayVariant<Element>
+shaderUniformArrayVariant(std::string methodName, std::string luaArrayType);
+
+template <typename Usertype, typename... Elements>
+void bindShaderUniformArrays(
+    Usertype &usertype, std::string_view luaOwner,
+    std::string_view inferredMethod,
+    ShaderUniformArrayVariant<Elements>... variants);
+
+} // namespace detail
 
 template <typename Signature>
 std::function<Signature> function_from_object(const sol::object &object);

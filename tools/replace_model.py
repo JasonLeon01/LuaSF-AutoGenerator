@@ -11,6 +11,7 @@ Sections
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 try:
@@ -19,11 +20,14 @@ try:
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
         CALLBACK_CODEC_SCHEMA_VERSION,
+        CONFIGURED_METHOD_OVERRIDES,
         CallbackCodec,
         CallbackParameter,
         CallbackReturn,
         CallbackSelector,
         ConfiguredBinding,
+        ConfiguredMethodOverride,
+        ConfiguredMethodVariant,
         CONVERSION_REGISTRY,
         CPP_BUILTIN_TYPES,
         INTEGER_TYPES,
@@ -31,9 +35,13 @@ try:
         LUA_NAMESPACE_PROJECTIONS,
         LifecycleCategory,
         NUMBER_TYPES,
+        OUTPUT_REFERENCE_POLICIES,
+        OutputReferenceParameter,
+        OutputReferencePolicy,
         PACKET_IO_REGISTRY,
         PUBLIC_TYPE_ALIASES,
         SIZE_TYPE_NAMES,
+        SKIPPED_CLASS_BINDINGS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
         TEMPLATE_SPECIALIZATION_OVERRIDES,
@@ -43,6 +51,7 @@ try:
         clean_cpp_type,
         core_cpp_type,
         is_anonymous_cpp_name,
+        is_const_type,
         is_pointer,
         is_reference,
         is_size_type,
@@ -64,11 +73,14 @@ except ImportError:
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
         CALLBACK_CODEC_SCHEMA_VERSION,
+        CONFIGURED_METHOD_OVERRIDES,
         CallbackCodec,
         CallbackParameter,
         CallbackReturn,
         CallbackSelector,
         ConfiguredBinding,
+        ConfiguredMethodOverride,
+        ConfiguredMethodVariant,
         CONVERSION_REGISTRY,
         CPP_BUILTIN_TYPES,
         INTEGER_TYPES,
@@ -76,9 +88,13 @@ except ImportError:
         LUA_NAMESPACE_PROJECTIONS,
         LifecycleCategory,
         NUMBER_TYPES,
+        OUTPUT_REFERENCE_POLICIES,
+        OutputReferenceParameter,
+        OutputReferencePolicy,
         PACKET_IO_REGISTRY,
         PUBLIC_TYPE_ALIASES,
         SIZE_TYPE_NAMES,
+        SKIPPED_CLASS_BINDINGS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
         TEMPLATE_SPECIALIZATION_OVERRIDES,
@@ -88,6 +104,7 @@ except ImportError:
         clean_cpp_type,
         core_cpp_type,
         is_anonymous_cpp_name,
+        is_const_type,
         is_pointer,
         is_reference,
         is_size_type,
@@ -111,11 +128,14 @@ __all__ = [
     "BYTE_TYPES",
     "CALLBACK_CODEC_REGISTRY",
     "CALLBACK_CODEC_SCHEMA_VERSION",
+    "CONFIGURED_METHOD_OVERRIDES",
     "CallbackCodec",
     "CallbackParameter",
     "CallbackReturn",
     "CallbackSelector",
     "ConfiguredBinding",
+    "ConfiguredMethodOverride",
+    "ConfiguredMethodVariant",
     "CONVERSION_REGISTRY",
     "CPP_BUILTIN_TYPES",
     "IGNORE_NAMES",
@@ -126,7 +146,6 @@ __all__ = [
     "LIFECYCLE_REGISTRY",
     "LifecycleCategory",
     "LUA_NAMESPACE_PROJECTIONS",
-    "LONG_LIVED_RESOURCE_RESET_METHODS",
     "LUA_KEYWORDS",
     "MANUAL_DEPENDENCIES",
     "MANUAL_HEADER_DECLARATION_PREFIX_OWNERS",
@@ -135,14 +154,14 @@ __all__ = [
     "NUMBER_TYPES",
     "NUMERIC_ARRAY_TYPES",
     "OPERATOR_META_FUNCTIONS",
-    "OUTPUT_ARRAY_COUNT_REF_NAMES",
-    "OUTPUT_REF_FUNCTIONS",
-    "OUTPUT_REF_NAMES",
+    "OUTPUT_REFERENCE_POLICIES",
+    "OutputReferenceParameter",
+    "OutputReferencePolicy",
     "PACKET_IO_REGISTRY",
     "PUBLIC_TYPE_ALIASES",
     "PacketIoType",
-    "SHADER_UNIFORM_ARRAY_BINDINGS",
     "SIZE_TYPE_NAMES",
+    "SKIPPED_CLASS_BINDINGS",
     "SPECIAL_POINTER_RETURNS",
     "STRING_TYPES",
     "TEMPLATE_PROFILES",
@@ -167,12 +186,17 @@ __all__ = [
     # Query functions
     "get_conversion",
     "get_callback_codec",
+    "get_configured_method_override",
     "get_lifecycle",
+    "get_output_reference_policy",
+    "skipped_class_binding_reason",
     "is_long_lived_memory_type",
     "is_long_lived_stream_type",
     "packet_io_info",
     "callback_codec_manifest",
     "validate_callback_codec_registry",
+    "validate_configured_method_override_registry",
+    "validate_output_reference_policy_registry",
     # Template rendering
     "render_template",
     # Lambda generators
@@ -183,7 +207,6 @@ __all__ = [
     "render_ll_reset",
     "render_ll_stream_ctor",
     "render_ll_stream_open",
-    "render_shader_uniform_array",
 ]
 
 # Re-export data from binding_config
@@ -192,17 +215,19 @@ try:
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
         CALLBACK_CODEC_SCHEMA_VERSION,
+        CONFIGURED_METHOD_OVERRIDES,
         CallbackCodec,
         CallbackParameter,
         CallbackReturn,
         CallbackSelector,
         ConfiguredBinding,
+        ConfiguredMethodOverride,
+        ConfiguredMethodVariant,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
-        LONG_LIVED_RESOURCE_RESET_METHODS,
         LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
         MANUAL_DEPENDENCIES,
@@ -212,13 +237,13 @@ try:
         NUMBER_TYPES,
         NUMERIC_ARRAY_TYPES,
         OPERATOR_META_FUNCTIONS,
-        OUTPUT_ARRAY_COUNT_REF_NAMES,
-        OUTPUT_REF_FUNCTIONS,
-        OUTPUT_REF_NAMES,
+        OUTPUT_REFERENCE_POLICIES,
+        OutputReferenceParameter,
+        OutputReferencePolicy,
         PACKET_IO_REGISTRY,
         PacketIoType,
-        SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
+        SKIPPED_CLASS_BINDINGS,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
@@ -234,17 +259,19 @@ except ImportError:
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
         CALLBACK_CODEC_SCHEMA_VERSION,
+        CONFIGURED_METHOD_OVERRIDES,
         CallbackCodec,
         CallbackParameter,
         CallbackReturn,
         CallbackSelector,
         ConfiguredBinding,
+        ConfiguredMethodOverride,
+        ConfiguredMethodVariant,
         IGNORE_NAMES,
         IGNORE_PARAM_TYPES,
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
-        LONG_LIVED_RESOURCE_RESET_METHODS,
         LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
         MANUAL_DEPENDENCIES,
@@ -254,13 +281,13 @@ except ImportError:
         NUMBER_TYPES,
         NUMERIC_ARRAY_TYPES,
         OPERATOR_META_FUNCTIONS,
-        OUTPUT_ARRAY_COUNT_REF_NAMES,
-        OUTPUT_REF_FUNCTIONS,
-        OUTPUT_REF_NAMES,
+        OUTPUT_REFERENCE_POLICIES,
+        OutputReferenceParameter,
+        OutputReferencePolicy,
         PACKET_IO_REGISTRY,
         PacketIoType,
-        SHADER_UNIFORM_ARRAY_BINDINGS,
         SIZE_TYPE_NAMES,
+        SKIPPED_CLASS_BINDINGS,
         SPECIAL_POINTER_RETURNS,
         STRING_TYPES,
         TEMPLATE_PROFILES,
@@ -278,6 +305,177 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 
+_CPP_QUALIFIED_IDENTIFIER = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*$"
+)
+
+
+def get_configured_method_override(
+    qualified_function: str,
+) -> ConfiguredMethodOverride | None:
+    qualified_function = clean_cpp_type(qualified_function)
+    matches = [
+        override
+        for override in CONFIGURED_METHOD_OVERRIDES
+        if clean_cpp_type(override.qualified_function) == qualified_function
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            f"ambiguous configured method override for {qualified_function!r}"
+        )
+    return matches[0] if matches else None
+
+
+def validate_configured_method_override_registry() -> None:
+    selectors: set[str] = set()
+    for override in CONFIGURED_METHOD_OVERRIDES:
+        selector = clean_cpp_type(override.qualified_function)
+        if not selector or selector in selectors:
+            raise ValueError(
+                f"duplicate or empty configured method override selector: {selector!r}"
+            )
+        selectors.add(selector)
+        if (
+            not override.lua_name
+            or not _CPP_QUALIFIED_IDENTIFIER.fullmatch(override.helper)
+            or not _CPP_QUALIFIED_IDENTIFIER.fullmatch(override.variant_factory)
+            or not override.native_parameter_types
+            or not clean_cpp_type(override.native_return_type)
+            or not override.variants
+        ):
+            raise ValueError(
+                f"configured method override {selector!r} has an incomplete policy"
+            )
+        element_placeholders = sum(
+            parameter_type.count("{element}")
+            for parameter_type in override.native_parameter_types
+        )
+        if (
+            element_placeholders != 1
+            or any(
+                "{" in parameter_type.replace("{element}", "")
+                or "}" in parameter_type.replace("{element}", "")
+                for parameter_type in override.native_parameter_types
+            )
+        ):
+            raise ValueError(
+                f"configured method override {selector!r} must declare exactly one "
+                "{element} native parameter placeholder"
+            )
+
+        lua_names: set[str] = set()
+        cpp_types: set[str] = set()
+        for variant in override.variants:
+            cpp_type = clean_cpp_type(variant.cpp_type)
+            if (
+                not variant.lua_name
+                or variant.lua_name == override.lua_name
+                or variant.lua_name in lua_names
+                or not cpp_type
+                or cpp_type in cpp_types
+                or not variant.lua_type
+            ):
+                raise ValueError(
+                    f"configured method override {selector!r} has an invalid variant"
+                )
+            lua_names.add(variant.lua_name)
+            cpp_types.add(cpp_type)
+
+
+def get_output_reference_policy(
+    qualified_function: str,
+    parameter_types: tuple[str, ...] | list[str],
+) -> OutputReferencePolicy | None:
+    selector = (
+        clean_cpp_type(qualified_function),
+        tuple(clean_cpp_type(value) for value in parameter_types),
+    )
+    matches = [
+        policy
+        for policy in OUTPUT_REFERENCE_POLICIES
+        if (
+            clean_cpp_type(policy.qualified_function),
+            tuple(clean_cpp_type(value) for value in policy.parameter_types),
+        )
+        == selector
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            f"ambiguous output-reference policy for {selector[0]}{selector[1]}"
+        )
+    return matches[0] if matches else None
+
+
+def validate_output_reference_policy_registry() -> None:
+    selectors: set[tuple[str, tuple[str, ...]]] = set()
+    for policy in OUTPUT_REFERENCE_POLICIES:
+        selector = (
+            clean_cpp_type(policy.qualified_function),
+            tuple(clean_cpp_type(value) for value in policy.parameter_types),
+        )
+        if not selector[0] or not selector[1] or selector in selectors:
+            raise ValueError(
+                f"duplicate or incomplete output-reference policy selector: {selector!r}"
+            )
+        selectors.add(selector)
+        if not policy.outputs:
+            raise ValueError(
+                f"output-reference policy {selector!r} has no output parameters"
+            )
+
+        indices: set[int] = set()
+        counted_arrays: set[int] = set()
+        previous_index = -1
+        for output in policy.outputs:
+            output_type = selector[1][output.index] if 0 <= output.index < len(selector[1]) else ""
+            if (
+                output.index < 0
+                or output.index >= len(selector[1])
+                or output.index in indices
+                or output.index <= previous_index
+                or not output.expected_name
+                or not is_reference(output_type)
+                or is_const_type(output_type)
+            ):
+                raise ValueError(
+                    f"output-reference policy {selector!r} has invalid output metadata"
+                )
+            if (
+                output.count_for_array_parameter is not None
+                and (
+                    output.count_for_array_parameter < 0
+                    or output.count_for_array_parameter >= len(selector[1])
+                    or output.count_for_array_parameter >= output.index
+                    or output.count_for_array_parameter in counted_arrays
+                )
+            ):
+                raise ValueError(
+                    f"output-reference policy {selector!r} has an invalid array-count relationship"
+                )
+            if output.count_for_array_parameter is not None:
+                buffer_index = output.count_for_array_parameter
+                buffer_type = selector[1][buffer_index]
+                size_index = buffer_index + 1
+                if (
+                    not is_pointer(buffer_type)
+                    or is_const_type(buffer_type)
+                    or size_index >= len(selector[1])
+                    or not is_size_type(cpp=selector[1][size_index])
+                    or remove_cvref(output_type) not in INTEGER_TYPES
+                ):
+                    raise ValueError(
+                        f"output-reference policy {selector!r} has an invalid array-count type relationship"
+                    )
+            indices.add(output.index)
+            if output.count_for_array_parameter is not None:
+                counted_arrays.add(output.count_for_array_parameter)
+            previous_index = output.index
+
+
+def skipped_class_binding_reason(qualified_name: str) -> str | None:
+    return SKIPPED_CLASS_BINDINGS.get(clean_cpp_type(qualified_name))
+
+
 def get_callback_codec(
     semantic_type: str,
     qualified_function: str = "",
@@ -286,18 +484,45 @@ def get_callback_codec(
 ) -> CallbackCodec | None:
     semantic_type = remove_cvref(clean_cpp_type(semantic_type))
     callable_signature = clean_cpp_type(callable_signature)
+
+    semantic_matches: list[CallbackCodec] = []
+    use_site_matches: list[CallbackCodec] = []
     for callback_codec in CALLBACK_CODEC_REGISTRY:
         selector = callback_codec.selector
-        if selector.semantic_alias and semantic_type != clean_cpp_type(selector.semantic_alias):
+        if selector.semantic_alias:
+            if semantic_type != clean_cpp_type(selector.semantic_alias):
+                continue
+            if selector.qualified_function and qualified_function != selector.qualified_function:
+                continue
+            if selector.parameter_name and parameter_name != selector.parameter_name:
+                continue
+            if (
+                selector.callable_signature
+                and callable_signature != clean_cpp_type(selector.callable_signature)
+            ):
+                continue
+            semantic_matches.append(callback_codec)
             continue
-        if selector.qualified_function and qualified_function != selector.qualified_function:
+
+        if selector.qualified_function != qualified_function:
             continue
-        if selector.parameter_name and parameter_name != selector.parameter_name:
+        if selector.parameter_name != parameter_name:
             continue
-        if selector.callable_signature and callable_signature != clean_cpp_type(selector.callable_signature):
+        if clean_cpp_type(selector.callable_signature) != callable_signature:
             continue
-        return callback_codec
-    return None
+        use_site_matches.append(callback_codec)
+
+    # Semantic aliases are matched by identity rather than by their expanded
+    # signature.  If an exact use-site policy also selects the same parameter,
+    # that is conflicting configuration and must not depend on registry order.
+    matches = semantic_matches + use_site_matches
+    if len(matches) > 1:
+        names = ", ".join(repr(callback_codec.name) for callback_codec in matches)
+        raise ValueError(
+            f"ambiguous callback codec for {semantic_type or callable_signature!r} "
+            f"at {qualified_function}.{parameter_name}: {names}"
+        )
+    return matches[0] if matches else None
 
 
 def validate_callback_codec_registry() -> None:
@@ -321,6 +546,21 @@ def validate_callback_codec_registry() -> None:
         if not any(selector_key) or selector_key in selectors:
             raise ValueError(f"duplicate or empty callback codec selector: {selector_key!r}")
         selectors.add(selector_key)
+        use_site_fields = (
+            selector.qualified_function,
+            selector.parameter_name,
+            selector.callable_signature,
+        )
+        if selector.semantic_alias and any(use_site_fields):
+            raise ValueError(
+                f"callback codec {callback_codec.name!r} cannot combine a semantic alias "
+                "with a function-parameter selector"
+            )
+        if not selector.semantic_alias and not all(use_site_fields):
+            raise ValueError(
+                f"callback codec {callback_codec.name!r} must select either a semantic alias "
+                "or an exact function/parameter/signature use site"
+            )
 
         if (
             not callback_codec.canonical_type.startswith("std::function<")
@@ -498,21 +738,23 @@ def render_ll_memory_ctor(
     owner_type: str,
     params: list[dict[str, Any]],
     lua_params: list[str],
+    *,
+    via_open_from_memory: bool,
 ) -> str:
-    """Render a long-lived memory constructor lambda."""
+    """Render a long-lived memory constructor lambda using the configured strategy."""
     info = param_info_memory(params)
     if info is None:
         raise ValueError("long-lived memory constructor requires a byte pointer and size parameter")
     data_name, size_type = info
     lua_args = ", ".join(lua_params)
 
-    if clean_cpp_type(owner_type) == "sf::MemoryInputStream":
-        tmpl = "ll_memory_ctor_direct"
-        kwargs = dict(data_name=data_name, owner_type=owner_type, size_type=size_type)
-    else:
+    if via_open_from_memory:
         tmpl = "ll_memory_ctor_via_open"
         kwargs = dict(data_name=data_name, owner_type=owner_type, size_type=size_type,
                       lua_path=lua_path_for_type(owner_type))
+    else:
+        tmpl = "ll_memory_ctor_direct"
+        kwargs = dict(data_name=data_name, owner_type=owner_type, size_type=size_type)
 
     body = render_template(tmpl, **kwargs)
     return f"[]({lua_args}) {{\n{_indent(body)}\n}}"
@@ -588,12 +830,3 @@ def render_ll_reset(
     parts.append(_indent(body))
     parts.append("}")
     return "\n".join(parts)
-
-
-def render_shader_uniform_array(
-    cpp_type: str,
-    param_name: str,
-) -> str:
-    """Render a single shader setUniform*Array dispatcher lambda."""
-    body = render_template("shader_uniform_array", cpp_type=cpp_type, param=param_name)
-    return f"[](sf::Shader& self, std::string name, sol::object {param_name}) {{\n{_indent(body)}\n}}"

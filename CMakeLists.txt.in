@@ -139,6 +139,7 @@ endif()
 
 set(LUASF_BINDING_SOURCES
 {binding_sources}
+    "src/LuaCallbackCodec.cpp"
     "src/LuaStateLifecycle.cpp"
     "{entry_source}"
 )
