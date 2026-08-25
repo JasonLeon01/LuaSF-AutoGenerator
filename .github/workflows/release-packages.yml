@@ -1,0 +1,112 @@
+name: Release packages
+
+run-name: Prepare LuaSF draft release for ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-packages:
+    name: Build release packages
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-packages.yml
+
+  create-release:
+    name: Create draft release
+    needs: build-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ASSETS_DIR: release-assets
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - name: Download Windows packages
+        uses: actions/download-artifact@v8
+        with:
+          name: LuaSF-Windows-VS2022-x64
+          path: ${{ env.RELEASE_ASSETS_DIR }}
+
+      - name: Download macOS packages
+        uses: actions/download-artifact@v8
+        with:
+          name: LuaSF-macOS-AppleSilicon-arm64
+          path: ${{ env.RELEASE_ASSETS_DIR }}
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_files=(
+              'LuaSF-source.zip'
+              'LuaSF-embedded-Windows-x64-MSVC.zip'
+              'LuaSF-extension-Windows-x64-MSVC.zip'
+              'LuaSF-source.tar.gz'
+              'LuaSF-embedded-macOS-ARM64-clang.tar.gz'
+              'LuaSF-extension-macOS-ARM64-clang.tar.gz'
+          )
+
+          for filename in "${expected_files[@]}"; do
+              path="$RELEASE_ASSETS_DIR/$filename"
+              if [ ! -f "$path" ]; then
+                  echo "Missing release asset: $path" >&2
+                  exit 1
+              fi
+          done
+
+          actual_file_count=$(find "$RELEASE_ASSETS_DIR" -mindepth 1 -maxdepth 1 -type f -print | wc -l | tr -d '[:space:]')
+          actual_entry_count=$(find "$RELEASE_ASSETS_DIR" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')
+          if [ "$actual_file_count" -ne "${#expected_files[@]}" ] || [ "$actual_entry_count" -ne "${#expected_files[@]}" ]; then
+              echo "Expected exactly ${#expected_files[@]} release assets, found $actual_file_count files and $actual_entry_count total entries:" >&2
+              find "$RELEASE_ASSETS_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort >&2
+              exit 1
+          fi
+
+      - name: Reject an existing release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          existing_releases=$(
+              gh api --paginate --method GET \
+                  "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                  --jq '.[] | [.tag_name, (.id | tostring), (.draft | tostring), .html_url] | @tsv' |
+                  awk -F '\t' -v tag="$RELEASE_TAG" '$1 == tag { print $2 "\t" $3 "\t" $4 }'
+          )
+          if [ -n "$existing_releases" ]; then
+              echo "A release already exists for tag '$RELEASE_TAG'; refusing to overwrite it:" >&2
+              printf '%s\n' "$existing_releases" >&2
+              exit 1
+          fi
+
+      - name: Create draft release with six assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create "$RELEASE_TAG" \
+              "$RELEASE_ASSETS_DIR/LuaSF-source.zip" \
+              "$RELEASE_ASSETS_DIR/LuaSF-embedded-Windows-x64-MSVC.zip" \
+              "$RELEASE_ASSETS_DIR/LuaSF-extension-Windows-x64-MSVC.zip" \
+              "$RELEASE_ASSETS_DIR/LuaSF-source.tar.gz" \
+              "$RELEASE_ASSETS_DIR/LuaSF-embedded-macOS-ARM64-clang.tar.gz" \
+              "$RELEASE_ASSETS_DIR/LuaSF-extension-macOS-ARM64-clang.tar.gz" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --generate-notes

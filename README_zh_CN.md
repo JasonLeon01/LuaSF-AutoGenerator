@@ -279,17 +279,23 @@ fun(
 }
 ```
 
-数组按 Lua 的 1-based 索引保存 flat interleaved sample。count 的单位是 frame，数组长度的单位是 sample。非 `nil` 输入数组必须恰好包含 `inputFrameCount * frameChannelCount` 个 sample；流结束时 input 为 `nil` 且输入 frame count 必须为零。调用前，输出数组会按 `outputFrameCount * frameChannelCount` 个 sample 零初始化。
+数组是普通 copying array，按 Lua 的 dense、1-based 索引保存 flat interleaved sample；它们不是原生 buffer view，也不接受旧 `.value` / `.capacity` 字段。LuaSF 会在多次调用之间复用 input/output scratch table：每次覆盖完整的当前输入、把完整输出容量清零，并在后续 block 变短时删除旧的尾部条目。这些 table 只在本次 callback 期间有效，callback 返回后不得保留或访问。count 的单位是 frame，数组长度的单位是 sample。非 `nil` 输入数组必须恰好包含 `inputFrameCount * frameChannelCount` 个 sample；流结束时 input 为 `nil` 且输入 frame count 必须为零。调用前，输出数组恰好包含 `outputFrameCount * frameChannelCount` 个 sample。
 
 callback 必须返回 table，其中包含实际消费的 `inputFrameCount` 和实际产生的 `outputFrameCount`，且二者不能超过原始容量。若结果省略 `outputFrames`，LuaSF 会回拷可能已被修改的第三个参数；若提供 `outputFrames`，则改用该 dense 数组。选中的输出数组必须覆盖所有实际输出 sample，且不能超过输出容量。稀疏数组、非数组 key、非法 count、溢出和容量越界均属于协议错误。
 
-音频线程只尝试进入 Lua state，不会等待。锁竞争只会旁路当前 block，且不会锁存错误；锁释放后会恢复处理。Lua 或协议错误会锁存共享 processor context，使当前及后续 block 均旁路；逻辑线程可通过 `LuaSF_take_deferred_callback_error` 仅取出一次固定容量的延迟错误。
+音频线程使用宿主的非阻塞串行 try-enter，绝不会等待 Lua VM。锁竞争只会 dry-bypass 当前 block，且不会锁存错误：LuaSF 会在输出容量范围内原样复制尽可能多的输入 frame；流结束仍保持 `nil` 加 `0` 输入 frame，并产生 `0` frame。VM 可用后，后续 block 会恢复处理。需要保持有状态处理连续性的宿主必须给 processor 使用不与其他工作竞争的 execution state。
+
+成功 try-enter 后，LuaSF 只在进入时自动 GC 正在运行的情况下暂停它。RAII 守卫覆盖 scratch array 填充、受保护 Lua 调用以及结果解析和回拷；正常与异常退出都会恢复进入时的状态，原本已停止的 collector 仍保持停止。因此，这一桥接过程中的内存分配不会在音频线程触发自动 GC 或 finalizer。音效 callback 不得显式执行或重启 GC，也不得依赖 finalizer 完成实时清理。
+
+Lua 或协议错误会锁存共享 processor context，使当前及后续 block 使用相同的 dry-bypass fallback。逻辑线程可通过 `LuaSF_take_deferred_callback_error` 仅取出一次固定容量的延迟错误；不得在音频 callback 内报告错误或执行清理。
 
 ### Callback state 与宿主契约
 
 LuaSF 以 `LUA_RIDX_MAINTHREAD` 作为每个已登记 `lua_State*`（包括 coroutine thread）的统一 identity。session、execution hook、deferred error、callback 保活、quiesce 和 shutdown 都归属 main state。callback 转换会自动登记当前正在执行的 coroutine，并将其强保活到 shutdown，因此 callback 可以在 coroutine 栈上创建 registry 引用，之后通过所属 main state 安全调用。如果宿主要在 callback 转换尚未观察到新 coroutine 前，直接把它传给 lifecycle 或 enter/leave API，必须先在独占该 VM 时调用 `LuaSF_initialize_state(coroutine)`；否则应传 main state。
 
-宿主必须让所有 Lua 入口（包括 `lua_pcall`、`luaL_dofile` 及同类 API）与 native callback 串行化。每个入口都应在成功的 `LuaSF_enter_state` 后执行并匹配 `LuaSF_leave_state`，或者安装 execution hooks，并让宿主执行始终使用同一把可重入/递归 VM lock。关闭 state 前必须先停止 callback producer，并严格执行 `LuaSF_quiesce_state` → `LuaSF_shutdown_state` → `lua_close`；shutdown 之后 callback 不得再访问该 state。
+宿主必须让所有 Lua 入口（包括 `lua_pcall`、`luaL_dofile` 及同类 API）与 native callback 串行化。每个入口都应在成功的 `LuaSF_enter_state` 后执行并匹配 `LuaSF_leave_state`，或者安装 execution hooks，并让宿主执行始终使用同一把可重入/递归 VM lock。effect 路径有意只使用非阻塞 try-enter hook。effect callback 绝不得对自己所属的 source 调用需等待 producer 的生命周期操作，否则该操作会等待当前 callback 自身。
+
+关闭 state 前必须先停止 callback producer，并在 state 仍有效时解除或销毁它们的 processor/factory，然后严格执行 `LuaSF_quiesce_state` → `LuaSF_shutdown_state` → `lua_close`。quiesce/shutdown 不能替代停止 producer thread；shutdown 之后 callback 不得再访问该 state。
 
 ## 运行时说明
 
