@@ -24,11 +24,38 @@ public:
         label(std::move(callbackLabel)) {}
 
   LuaRegistryReference reference;
+  LuaRegistryReference inputFrames;
+  LuaRegistryReference outputFrames;
+  std::size_t inputSampleCount{};
+  std::size_t outputSampleCount{};
   std::string label;
   std::atomic<bool> faulted{};
 };
 
 namespace {
+
+class AutomaticGcPause final {
+public:
+  explicit AutomaticGcPause(lua_State *state) noexcept
+      : state_(state), wasRunning_(lua_gc(state, LUA_GCISRUNNING) != 0) {
+    if (wasRunning_)
+      lua_gc(state_, LUA_GCSTOP);
+  }
+
+  ~AutomaticGcPause() {
+    if (wasRunning_)
+      lua_gc(state_, LUA_GCRESTART);
+    else
+      lua_gc(state_, LUA_GCSTOP);
+  }
+
+  AutomaticGcPause(const AutomaticGcPause &) = delete;
+  AutomaticGcPause &operator=(const AutomaticGcPause &) = delete;
+
+private:
+  lua_State *state_{};
+  bool wasRunning_{};
+};
 
 void recordFault(const std::shared_ptr<CallbackContext> &context,
                  std::string_view message) noexcept {
@@ -78,6 +105,129 @@ std::size_t sampleCount(unsigned int frames, unsigned int channels) {
   return count;
 }
 
+class LuaStackRestore final {
+public:
+  explicit LuaStackRestore(lua_State *state) noexcept
+      : state_(state), top_(lua_gettop(state)) {}
+
+  ~LuaStackRestore() { lua_settop(state_, top_); }
+
+  LuaStackRestore(const LuaStackRestore &) = delete;
+  LuaStackRestore &operator=(const LuaStackRestore &) = delete;
+
+private:
+  lua_State *state_{};
+  int top_{};
+};
+
+int pushCachedDenseTable(lua_State *state, LuaRegistryReference &reference,
+                         std::size_t sampleCount,
+                         std::size_t &previousSampleCount,
+                         const float *samples) {
+  if (!reference) {
+    lua_createtable(state, static_cast<int>(sampleCount), 0);
+    reference = LuaRegistryReference(state, -1);
+  } else if (!reference.pushUnderExecutionScope()) {
+    throw std::runtime_error("Lua audio sample table is unavailable");
+  }
+
+  const int tableIndex = lua_absindex(state, -1);
+  for (std::size_t index = 0; index < sampleCount; ++index) {
+    lua_pushnumber(state, samples == nullptr ? 0.F : samples[index]);
+    lua_rawseti(state, tableIndex, static_cast<lua_Integer>(index + 1));
+  }
+  for (std::size_t index = sampleCount; index < previousSampleCount; ++index) {
+    lua_pushnil(state);
+    lua_rawseti(state, tableIndex, static_cast<lua_Integer>(index + 1));
+  }
+  previousSampleCount = sampleCount;
+  return tableIndex;
+}
+
+void validateResultFields(lua_State *state, int resultIndex) {
+  resultIndex = lua_absindex(state, resultIndex);
+  lua_pushnil(state);
+  while (lua_next(state, resultIndex) != 0) {
+    if (lua_type(state, -2) != LUA_TSTRING) {
+      throw std::invalid_argument(
+          "audio callback result must contain only named fields");
+    }
+    std::size_t nameLength = 0;
+    const char *nameData = lua_tolstring(state, -2, &nameLength);
+    const std::string_view name(nameData, nameLength);
+    if (name != "inputFrameCount" && name != "outputFrameCount" &&
+        name != "outputFrames") {
+      throw std::invalid_argument("unknown audio callback result field: " +
+                                  std::string(name));
+    }
+    lua_pop(state, 1);
+  }
+}
+
+unsigned int readRequiredFrameCount(lua_State *state, int resultIndex,
+                                    const char *field, unsigned int capacity) {
+  lua_getfield(state, resultIndex, field);
+  if (lua_isnil(state, -1)) {
+    throw std::invalid_argument(std::string("audio callback result.") + field +
+                                " is required");
+  }
+  unsigned int count = 0;
+  if (!tryReadLuaIntegral(state, -1, count)) {
+    throw std::invalid_argument(std::string("audio callback result.") + field +
+                                " must be a finite, in-range integer");
+  }
+  lua_pop(state, 1);
+  if (count > capacity) {
+    throw std::out_of_range(std::string("audio callback result.") + field +
+                            " exceeds its native capacity");
+  }
+  return count;
+}
+
+void copyDenseFloatArray(lua_State *state, int tableIndex,
+                         std::size_t minimumSize, std::size_t maximumSize,
+                         float *output, std::string_view label) {
+  if (lua_type(state, tableIndex) != LUA_TTABLE) {
+    throw std::invalid_argument(std::string(label) + " must be an array");
+  }
+  tableIndex = lua_absindex(state, tableIndex);
+  std::size_t entryCount = 0;
+  std::size_t maximumIndex = 0;
+  lua_pushnil(state);
+  while (lua_next(state, tableIndex) != 0) {
+    std::size_t index = 0;
+    if (!tryReadLuaIntegral(state, -2, index)) {
+      throw std::invalid_argument(std::string(label) +
+                                  " must contain only array indices");
+    }
+    if (index == 0 || index > maximumSize) {
+      throw std::out_of_range(std::string(label) +
+                              " index exceeds the permitted capacity");
+    }
+    if (lua_type(state, -1) != LUA_TNUMBER) {
+      throw std::invalid_argument(std::string(label) +
+                                  " must contain only numbers");
+    }
+    ++entryCount;
+    maximumIndex = std::max(maximumIndex, index);
+    lua_pop(state, 1);
+  }
+  if (entryCount != maximumIndex) {
+    throw std::invalid_argument(std::string(label) +
+                                " must be a dense 1-based array");
+  }
+  if (maximumIndex < minimumSize) {
+    throw std::out_of_range(std::string(label) +
+                            " does not cover the produced samples");
+  }
+
+  for (std::size_t index = 0; index < minimumSize; ++index) {
+    lua_rawgeti(state, tableIndex, static_cast<lua_Integer>(index + 1));
+    output[index] = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+  }
+}
+
 std::vector<float> readDenseFloatArray(const sol::object &object,
                                        std::size_t minimumSize,
                                        std::size_t maximumSize,
@@ -116,33 +266,6 @@ std::vector<float> readDenseFloatArray(const sol::object &object,
     values.push_back(value.as<float>());
   }
   return values;
-}
-
-unsigned int readRequiredFrameCount(const sol::table &result, const char *field,
-                                    unsigned int capacity) {
-  const sol::object value = result.raw_get<sol::object>(field);
-  if (is_nil_object(value))
-    throw std::invalid_argument(std::string("audio callback result.") + field +
-                                " is required");
-  const unsigned int count = object_as<unsigned int>(value);
-  if (count > capacity)
-    throw std::out_of_range(std::string("audio callback result.") + field +
-                            " exceeds its native capacity");
-  return count;
-}
-
-void validateResultFields(const sol::table &result) {
-  for (const auto &entry : result) {
-    const sol::object key = entry.first;
-    if (!key.is<std::string>())
-      throw std::invalid_argument(
-          "audio callback result must contain only named fields");
-    const std::string name = key.as<std::string>();
-    if (name != "inputFrameCount" && name != "outputFrameCount" &&
-        name != "outputFrames")
-      throw std::invalid_argument("unknown audio callback result field: " +
-                                  name);
-  }
 }
 
 template <typename Callback>
@@ -196,50 +319,52 @@ void invokeInterleavedFloatTransform(
     return;
   }
   try {
+    AutomaticGcPause gcPause(state);
+    LuaStackRestore stackRestore(state);
     if (!context->reference.pushUnderExecutionScope()) {
       fallback(inputFrames, inputFrameCount, outputFrames, outputFrameCount,
                frameChannelCount);
       return;
     }
-    auto popper = sol::stack::pop_n(state, 1);
-    sol::protected_function function =
-        sol::stack::get<sol::protected_function>(state, -1);
+    const int functionIndex = lua_absindex(state, -1);
     const std::size_t inputSamples = sampleCount(
         inputFrames == nullptr ? 0 : originalInput, frameChannelCount);
     const std::size_t outputSamples =
         sampleCount(originalOutput, frameChannelCount);
-    sol::state_view lua(state);
-    std::vector<float> inputValues;
-    if (inputFrames != nullptr)
-      inputValues.assign(inputFrames, inputFrames + inputSamples);
-    std::vector<float> outputValues(outputSamples, 0.F);
-    const sol::object inputObject =
-        inputFrames == nullptr ? sol::make_object(lua, lua_sf::LUASF_SOL_NIL)
-                               : vector_to_object(lua, inputValues);
-    const sol::object outputObject = vector_to_object(lua, outputValues);
+    const int inputTableIndex =
+        pushCachedDenseTable(state, context->inputFrames, inputSamples,
+                             context->inputSampleCount, inputFrames);
+    const int outputTableIndex =
+        pushCachedDenseTable(state, context->outputFrames, outputSamples,
+                             context->outputSampleCount, nullptr);
+
+    const sol::stack_protected_function function(state, functionIndex);
+    const sol::stack_object outputObject(state, outputTableIndex);
     sol::protected_function_result result =
-        function(inputObject, originalInput, outputObject, originalOutput,
-                 frameChannelCount);
+        inputFrames == nullptr
+            ? function(lua_sf::LUASF_SOL_NIL, originalInput, outputObject,
+                       originalOutput, frameChannelCount)
+            : function(sol::stack_object(state, inputTableIndex), originalInput,
+                       outputObject, originalOutput, frameChannelCount);
     throw_on_lua_error(result);
-    const sol::object returned = result;
-    if (!returned.is<sol::table>())
+    const int resultIndex = result.stack_index();
+    if (lua_type(state, resultIndex) != LUA_TTABLE) {
       throw std::invalid_argument("audio callback must return a result table");
-    const sol::table resultTable = returned.as<sol::table>();
-    validateResultFields(resultTable);
-    const unsigned int consumed =
-        readRequiredFrameCount(resultTable, "inputFrameCount", originalInput);
-    const unsigned int produced =
-        readRequiredFrameCount(resultTable, "outputFrameCount", originalOutput);
+    }
+    validateResultFields(state, resultIndex);
+    const unsigned int consumed = readRequiredFrameCount(
+        state, resultIndex, "inputFrameCount", originalInput);
+    const unsigned int produced = readRequiredFrameCount(
+        state, resultIndex, "outputFrameCount", originalOutput);
     const std::size_t producedSamples =
         sampleCount(produced, frameChannelCount);
-    const sol::object replacement =
-        resultTable.raw_get<sol::object>("outputFrames");
-    const sol::object selectedOutput =
-        is_nil_object(replacement) ? outputObject : replacement;
-    outputValues = readDenseFloatArray(selectedOutput, producedSamples,
-                                       outputSamples, "outputFrames");
-    if (producedSamples != 0)
-      std::copy_n(outputValues.begin(), producedSamples, outputFrames);
+    lua_getfield(state, resultIndex, "outputFrames");
+    if (lua_isnil(state, -1)) {
+      lua_pop(state, 1);
+      lua_pushvalue(state, outputTableIndex);
+    }
+    copyDenseFloatArray(state, -1, producedSamples, outputSamples, outputFrames,
+                        "outputFrames");
     inputFrameCount = consumed;
     outputFrameCount = produced;
   } catch (const std::exception &error) {
