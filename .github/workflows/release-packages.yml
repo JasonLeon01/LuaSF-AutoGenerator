@@ -1,6 +1,6 @@
 name: Release packages
 
-run-name: Prepare LuaSF draft release for ${{ github.ref_name }}
+run-name: Publish LuaSF release for ${{ github.ref_name }}
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
     uses: ./.github/workflows/build-packages.yml
 
   create-release:
-    name: Create draft release
+    name: Publish release
     needs: build-packages
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -94,7 +94,7 @@ jobs:
               exit 1
           fi
 
-      - name: Create draft release with six assets
+      - name: Publish release with six assets
         shell: bash
         run: |
           set -euo pipefail
@@ -108,5 +108,4 @@ jobs:
               "$RELEASE_ASSETS_DIR/LuaSF-extension-macOS-ARM64-clang.tar.gz" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
-              --draft \
               --generate-notes
