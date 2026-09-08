@@ -8,7 +8,7 @@ PYTHON_BIN=${PYTHON:-python3.12}
 VENV_PYTHON=".venv/bin/python"
 
 SFML_REPOSITORY=
-SFML_BRANCH=
+SFML_TAG=
 LUA_VERSION=
 LUA_SHA256=
 SOL2_VERSION=
@@ -18,14 +18,14 @@ while IFS='=' read -r key value; do
     case "$key" in
         ''|'#'*) continue ;;
         SFML_REPOSITORY) SFML_REPOSITORY=$value ;;
-        SFML_BRANCH) SFML_BRANCH=$value ;;
+        SFML_TAG) SFML_TAG=$value ;;
         LUA_VERSION) LUA_VERSION=$value ;;
         LUA_SHA256) LUA_SHA256=$value ;;
         SOL2_VERSION) SOL2_VERSION=$value ;;
     esac
 done < versions.conf
 
-if [ -z "$SFML_REPOSITORY" ] || [ -z "$SFML_BRANCH" ] || [ -z "$LUA_VERSION" ] || [ -z "$LUA_SHA256" ] || [ -z "$SOL2_VERSION" ]; then
+if [ -z "$SFML_REPOSITORY" ] || [ -z "$SFML_TAG" ] || [ -z "$LUA_VERSION" ] || [ -z "$LUA_SHA256" ] || [ -z "$SOL2_VERSION" ]; then
     echo "Missing required versions in versions.conf." >&2
     exit 1
 fi
@@ -40,9 +40,9 @@ echo "Installing Python requirements into .venv..."
 
 if [ ! -f "third_party/SFML/CMakeLists.txt" ]; then
     sh "$SCRIPT_DIR/download_lib.sh" "SFML" \
-        "https://github.com/$SFML_REPOSITORY/archive/refs/heads/$SFML_BRANCH.tar.gz" \
+        "https://github.com/$SFML_REPOSITORY/archive/refs/tags/$SFML_TAG.tar.gz" \
         "sfml.tar.gz" \
-        "SFML-ME-$SFML_BRANCH" \
+        "SFML-ME-$SFML_TAG" \
         "SFML"
 else
     echo "Using existing third_party/SFML."
