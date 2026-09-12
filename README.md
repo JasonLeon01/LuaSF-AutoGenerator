@@ -38,6 +38,8 @@ sh build.sh Release
 
 This creates the generated source project under `output/` and builds the embedded LuaSF dynamic library, the plain Lua extension module, and the Lua language-server stub.
 
+On macOS arm64 with AppleClang, Release builds use `-Os` for the binding units and module registration entry point, while retaining Release LTO. The callback codec, state lifecycle support, and dependencies keep their existing optimization settings. Other platforms, architectures, compilers, and configurations retain their existing optimization settings.
+
 To collect a redistributable package:
 
 ```bat
