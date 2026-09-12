@@ -134,10 +134,21 @@ endif()
 
 set(LUASF_BINDING_SOURCES
 {binding_sources}
+)
+
+set(LUASF_RUNTIME_SOURCES
     "src/LuaCallbackCodec.cpp"
     "src/LuaStateLifecycle.cpp"
-    "{entry_source}"
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR
+       (NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64"))
+        set_property(SOURCE ${{LUASF_BINDING_SOURCES}} "{entry_source}" APPEND PROPERTY
+            COMPILE_OPTIONS "$<$<CONFIG:Release>:-Os>"
+        )
+    endif()
+endif()
 
 set(LUASF_SOL_COMPAT_INCLUDE "${{LUASF_BINARY_ROOT}}/generated_include")
 file(MAKE_DIRECTORY "${{LUASF_SOL_COMPAT_INCLUDE}}/sol")
@@ -197,11 +208,15 @@ set(LUASF_BINDING_HEADERS
 
 add_library({target_name} ${{LUASF_LIBRARY_TYPE}}
     ${{LUASF_BINDING_SOURCES}}
+    ${{LUASF_RUNTIME_SOURCES}}
+    "{entry_source}"
     ${{LUASF_BINDING_HEADERS}}
 )
 
 add_library({target_name}_lua_extension ${{LUASF_EXTENSION_LIBRARY_TYPE}} EXCLUDE_FROM_ALL
     ${{LUASF_BINDING_SOURCES}}
+    ${{LUASF_RUNTIME_SOURCES}}
+    "{entry_source}"
     ${{LUASF_BINDING_HEADERS}}
 )
 

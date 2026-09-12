@@ -38,6 +38,8 @@ sh build.sh Release
 
 这会在 `output/` 下创建生成后的源码工程，并构建嵌入式 LuaSF 动态库、普通 Lua 扩展模块以及 Lua language-server stub。
 
+在使用 AppleClang 的 macOS arm64 构建中，Release 会对绑定单元和模块注册入口使用 `-Os`，同时保留 Release LTO。回调编解码、状态生命周期支持代码以及依赖库保持原有优化设置。其他平台、架构、编译器和构建配置也保持原有优化设置。
+
 收集可分发包：
 
 ```bat
