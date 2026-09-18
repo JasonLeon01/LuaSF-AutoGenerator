@@ -1,49 +1,92 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 cd /d "%~dp0"
 
 set "CONFIG_OVERRIDE=%~1"
-set "CONFIGURE_ARGS="
-if not "%CONFIG_OVERRIDE%"=="" (
-    set "CONFIGURE_ARGS=-DLUASF_DEFAULT_CONFIG=%CONFIG_OVERRIDE% -DCMAKE_BUILD_TYPE=%CONFIG_OVERRIDE%"
-)
-
 set "PYTHON_EXE=.venv\Scripts\python.exe"
+
+if not "%~3"=="" (
+    echo Usage: build.bat [Debug^|Release^|RelWithDebInfo^|MinSizeRel] [ME^|ME-OH]
+    exit /b 2
+)
 
 if not exist "%PYTHON_EXE%" (
     echo Missing .venv. Run init.bat first.
     exit /b 1
 )
 
+for /f "usebackq eol=# tokens=1,2 delims==" %%a in ("versions.conf") do set %%a=%%b
+
+if "%~2"=="" goto :variant_default
+if /i "%~2"=="ME" goto :variant_me
+if /i "%~2"=="ME-OH" goto :variant_me_oh
+echo Unknown SFML variant "%~2". Use ME or ME-OH.
+exit /b 2
+
+:variant_me
+set "SFML_VARIANT=ME"
+set "SFML_VARIANT_TAG=%SFML_ME_TAG%"
+goto :variant_ready
+
+:variant_me_oh
+set "SFML_VARIANT=ME-OH"
+set "SFML_VARIANT_TAG=%SFML_ME_OH_TAG%"
+goto :variant_ready
+
+:variant_default
+set "SFML_VARIANT="
+set "SFML_VARIANT_TAG=%SFML_TAG%"
+goto :variant_ready
+
+:variant_ready
+
 if not exist "third_party\SFML\CMakeLists.txt" (
-    echo Missing third_party\SFML. Run init.bat first.
+    echo Missing third_party\SFML. Run init.bat %SFML_VARIANT% first.
+    exit /b 1
+)
+
+set "SFML_TAG_CURRENT="
+if exist "third_party\SFML\.luasf-sfml-tag" set /p SFML_TAG_CURRENT=<"third_party\SFML\.luasf-sfml-tag"
+if not "!SFML_TAG_CURRENT!"=="!SFML_VARIANT_TAG!" (
+    echo third_party\SFML is not the !SFML_VARIANT! ^(!SFML_VARIANT_TAG!^) checkout.
+    echo Run init.bat %SFML_VARIANT% first.
     exit /b 1
 )
 
 if not exist "third_party\Lua\src\lua.h" (
-    echo Missing third_party\Lua. Run init.bat first.
+    echo Missing third_party\Lua. Run init.bat %SFML_VARIANT% first.
     exit /b 1
 )
 
 if not exist "third_party\sol2\include\sol2\sol.hpp" (
-    echo Missing third_party\sol2. Run init.bat first.
+    echo Missing third_party\sol2. Run init.bat %SFML_VARIANT% first.
     exit /b 1
 )
 
 echo Applying sol2 PR #1606 patch if needed...
-git apply --reverse --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch >nul 2>nul
+rem The published sol2 headers use CRLF line endings, so the patch has to
+rem ignore whitespace to match.
+git apply --ignore-whitespace --reverse --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch >nul 2>nul
 if not errorlevel 1 (
     echo PR #1606 patch already applied to sol2.
 ) else (
-    git apply --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
+    git apply --ignore-whitespace --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
     if errorlevel 1 exit /b 1
-    git apply --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
+    git apply --ignore-whitespace --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
     if errorlevel 1 exit /b 1
 )
 
+set "VARIANT_FILE=%~dp0.luasf-sfml-variant"
+set "PREVIOUS_VARIANT="
+if exist "%VARIANT_FILE%" set /p PREVIOUS_VARIANT=<"%VARIANT_FILE%"
+if not "!PREVIOUS_VARIANT!"=="!SFML_VARIANT!" (
+    echo SFML variant changed; discarding the previous output\build directory.
+    if exist "output\build" rmdir /s /q "output\build"
+)
+
 echo Extracting SFML public API...
-"%PYTHON_EXE%" tools\extract_sfml_api.py
+"%PYTHON_EXE%" tools\extract_sfml_api.py --include-dir third_party/SFML/include
 if errorlevel 1 exit /b 1
 
 echo Generating sol2 bindings...
@@ -53,6 +96,19 @@ if errorlevel 1 exit /b 1
 echo Generating standalone output CMake project...
 "%PYTHON_EXE%" tools\generate_build_files.py --force-sort
 if errorlevel 1 exit /b 1
+
+if "%SFML_VARIANT%"=="" (
+    rem The default variant is intentionally represented by an empty marker.
+    rem `set /p` is not reliable for creating an empty file in cmd.exe.
+    type nul >"%VARIANT_FILE%"
+) else (
+    >"%VARIANT_FILE%" echo %SFML_VARIANT%
+)
+
+set "CONFIGURE_ARGS=-DLUASF_SFML_ROOT=%~dp0third_party\SFML -DLUASF_LUA_ROOT=%~dp0third_party\Lua -DLUASF_SOL2_ROOT=%~dp0third_party\sol2"
+if not "%CONFIG_OVERRIDE%"=="" (
+    set "CONFIGURE_ARGS=!CONFIGURE_ARGS! -DLUASF_DEFAULT_CONFIG=%CONFIG_OVERRIDE% -DCMAKE_BUILD_TYPE=%CONFIG_OVERRIDE%"
+)
 
 echo Configuring output CMake project...
 cmake -S output -B output\build %CONFIGURE_ARGS%
@@ -65,20 +121,18 @@ if "%BUILD_CONFIG%"=="" (
     exit /b 1
 )
 
-echo Building embedded LuaSF, Lua extension, host luac, and Lua stub from output CMake project...
+echo Building embedded LuaSF, host luac, and Lua stub from output CMake project...
 cmake --build output\build --config %BUILD_CONFIG% --target LuaSF_build_outputs --parallel 1
 if errorlevel 1 exit /b 1
 
 set "EMBEDDED_DLL=%~dp0output\build\bin\%BUILD_CONFIG%\embedded\LuaSF.dll"
-set "EXTENSION_DLL=%~dp0output\build\bin\%BUILD_CONFIG%\extension\LuaSF.dll"
 if not exist "%EMBEDDED_DLL%" set "EMBEDDED_DLL=%~dp0output\build\bin\embedded\%BUILD_CONFIG%\LuaSF.dll"
-if not exist "%EXTENSION_DLL%" set "EXTENSION_DLL=%~dp0output\build\bin\extension\%BUILD_CONFIG%\LuaSF.dll"
 
 echo.
 echo Done.
 echo Project: %~dp0output
+echo SFML variant: %SFML_VARIANT% (%SFML_VARIANT_TAG%)
 echo Embedded DLL: %EMBEDDED_DLL%
-echo Lua extension: %EXTENSION_DLL%
 echo Stub: %~dp0output\build\LuaSF.d.lua
 
 endlocal

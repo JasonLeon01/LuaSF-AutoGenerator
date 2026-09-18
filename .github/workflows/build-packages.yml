@@ -13,9 +13,25 @@ permissions:
 
 jobs:
   windows-vs2022:
-    name: Windows VS2022 x64
+    name: Windows VS2022 x64 ${{ matrix.variant_label }}
     runs-on: windows-2022
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ''
+            variant_label: default
+            variant_suffix: ''
+            sfml_tag: '3.1.0'
+          - variant: ME
+            variant_label: ME
+            variant_suffix: '-ME'
+            sfml_tag: '310ME-iOSJoystick'
+          - variant: ME-OH
+            variant_label: ME-OH
+            variant_suffix: '-ME-OH'
+            sfml_tag: '310-ME-OH-GLESVER'
     env:
       CMAKE_GENERATOR: Visual Studio 17 2022
       CMAKE_GENERATOR_PLATFORM: x64
@@ -54,11 +70,11 @@ jobs:
 
       - name: Initialize dependencies
         shell: cmd
-        run: call init.bat
+        run: call init.bat ${{ matrix.variant }}
 
       - name: Build Release packages
         shell: cmd
-        run: call build.bat Release
+        run: call build.bat Release ${{ matrix.variant }}
 
       - name: Verify VS2022 generator
         shell: pwsh
@@ -69,6 +85,32 @@ jobs:
           }
           if ($cacheLines -notcontains 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64') {
               throw 'The output project was not generated for x64.'
+          }
+
+      - name: Verify SFML variant
+        shell: pwsh
+        run: |
+          $tagFile = 'third_party/SFML/.luasf-sfml-tag'
+          if (-not (Test-Path -LiteralPath $tagFile -PathType Leaf)) {
+              throw "Missing SFML tag marker: $tagFile"
+          }
+          $actualTag = [string](Get-Content -LiteralPath $tagFile -Raw)
+          $actualTag = $actualTag.Trim()
+          if ($actualTag -ne '${{ matrix.sfml_tag }}') {
+              throw "Expected SFML tag '${{ matrix.sfml_tag }}', found '$actualTag'."
+          }
+          $variantFile = '.luasf-sfml-variant'
+          if (-not (Test-Path -LiteralPath $variantFile -PathType Leaf)) {
+              throw "Missing SFML variant marker: $variantFile"
+          }
+          $actualVariant = Get-Content -LiteralPath $variantFile -Raw
+          if ($null -eq $actualVariant) {
+              $actualVariant = ''
+          } else {
+              $actualVariant = $actualVariant.Trim()
+          }
+          if ($actualVariant -ne '${{ matrix.variant }}') {
+              throw "Expected SFML variant '${{ matrix.variant }}', found '$actualVariant'."
           }
 
       - name: Collect Release result
@@ -83,14 +125,22 @@ jobs:
         shell: pwsh
         run: |
           $expectedPackages = @(
-              'output/packages/LuaSF-source.zip',
-              'output/packages/LuaSF-embedded-Windows-x64-MSVC.zip',
-              'output/packages/LuaSF-extension-Windows-x64-MSVC.zip'
+              'output/packages/LuaSF-source${{ matrix.variant_suffix }}.zip',
+              'output/packages/LuaSF-embedded${{ matrix.variant_suffix }}-Windows-x64-MSVC.zip'
           )
           foreach ($package in $expectedPackages) {
               if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
                   throw "Missing package: $package"
               }
+          }
+
+          $actualPackages = @(Get-ChildItem -LiteralPath 'output/packages' -File)
+          if ($actualPackages.Count -ne $expectedPackages.Count) {
+              throw "Expected $($expectedPackages.Count) packages, found $($actualPackages.Count): $($actualPackages.Name -join ', ')"
+          }
+
+          if (Test-Path -LiteralPath 'output/result/extension') {
+              throw 'The collected result still contains a removed extension package.'
           }
 
           $requiredRuntimeDlls = @(
@@ -110,19 +160,38 @@ jobs:
           if (-not (Get-ChildItem -LiteralPath 'output/result/embedded/bin' -Filter 'sfml-*.dll' -File)) {
               throw 'The embedded result does not contain SFML runtime DLLs.'
           }
+          if (-not (Test-Path -LiteralPath 'output/result/embedded/stub/LuaSF.d.lua' -PathType Leaf)) {
+              throw 'The embedded result does not contain the LuaSF stub.'
+          }
 
       - name: Upload Windows packages
         uses: actions/upload-artifact@v7
         with:
-          name: LuaSF-Windows-VS2022-x64
+          name: LuaSF${{ matrix.variant_suffix }}-Windows-VS2022-x64
           path: output/packages/*.zip
           if-no-files-found: error
           compression-level: 0
 
   macos-apple-silicon:
-    name: macOS Apple Silicon arm64
+    name: macOS Apple Silicon arm64 ${{ matrix.variant_label }}
     runs-on: macos-15
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ''
+            variant_label: default
+            variant_suffix: ''
+            sfml_tag: '3.1.0'
+          - variant: ME
+            variant_label: ME
+            variant_suffix: '-ME'
+            sfml_tag: '310ME-iOSJoystick'
+          - variant: ME-OH
+            variant_label: ME-OH
+            variant_suffix: '-ME-OH'
+            sfml_tag: '310-ME-OH-GLESVER'
     env:
       CMAKE_OSX_ARCHITECTURES: arm64
 
@@ -171,17 +240,42 @@ jobs:
 
       - name: Initialize dependencies
         shell: sh
-        run: sh init.sh
+        run: sh init.sh ${{ matrix.variant }}
 
       - name: Build Release packages
         shell: sh
-        run: sh build.sh Release
+        run: sh build.sh Release ${{ matrix.variant }}
 
       - name: Verify arm64 output configuration
         shell: bash
         run: |
           set -euo pipefail
           grep -Eq '^CMAKE_OSX_ARCHITECTURES:[^=]*=arm64$' output/build/CMakeCache.txt
+
+      - name: Verify SFML variant
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f third_party/SFML/.luasf-sfml-tag ]; then
+              echo 'Missing SFML tag marker: third_party/SFML/.luasf-sfml-tag' >&2
+              exit 1
+          fi
+          actual_tag=$(cat third_party/SFML/.luasf-sfml-tag)
+          if [ "$actual_tag" != '${{ matrix.sfml_tag }}' ]; then
+              echo "Expected SFML tag '${{ matrix.sfml_tag }}', found '$actual_tag'." >&2
+              exit 1
+          fi
+
+          if [ ! -f .luasf-sfml-variant ]; then
+              echo 'Missing SFML variant marker: .luasf-sfml-variant' >&2
+              exit 1
+          fi
+          actual_variant=$(cat .luasf-sfml-variant)
+          if [ "$actual_variant" != '${{ matrix.variant }}' ]; then
+              echo "Expected SFML variant '${{ matrix.variant }}', found '$actual_variant'." >&2
+              exit 1
+          fi
 
       - name: Collect Release result
         shell: sh
@@ -195,6 +289,11 @@ jobs:
           unexpected_dll=$(find output/result -type f -name '*.dll' -print -quit)
           if [ -n "$unexpected_dll" ]; then
               echo "Unexpected Windows DLL in macOS result: $unexpected_dll" >&2
+              exit 1
+          fi
+
+          if [ -d output/result/extension ]; then
+              echo 'The collected result still contains a removed extension package.' >&2
               exit 1
           fi
 
@@ -213,6 +312,11 @@ jobs:
               exit 1
           fi
 
+          if [ ! -f output/result/embedded/stub/LuaSF.d.lua ]; then
+              echo 'The embedded result does not contain the LuaSF stub.' >&2
+              exit 1
+          fi
+
       - name: Pack distributable archives
         shell: sh
         run: sh pack_result.sh
@@ -221,20 +325,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for package in \
-              output/packages/LuaSF-source.tar.gz \
-              output/packages/LuaSF-embedded-macOS-ARM64-clang.tar.gz \
-              output/packages/LuaSF-extension-macOS-ARM64-clang.tar.gz; do
+
+          expected_packages=(
+              "output/packages/LuaSF-source${{ matrix.variant_suffix }}.tar.gz"
+              "output/packages/LuaSF-embedded${{ matrix.variant_suffix }}-macOS-ARM64-clang.tar.gz"
+          )
+          for package in "${expected_packages[@]}"; do
               if [ ! -f "$package" ]; then
                   echo "Missing package: $package" >&2
                   exit 1
               fi
           done
 
+          actual_count=$(find output/packages -mindepth 1 -maxdepth 1 -type f -print | wc -l | tr -d '[:space:]')
+          if [ "$actual_count" -ne "${#expected_packages[@]}" ]; then
+              echo "Expected ${#expected_packages[@]} packages, found $actual_count:" >&2
+              find output/packages -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort >&2
+              exit 1
+          fi
+
       - name: Upload macOS packages
         uses: actions/upload-artifact@v7
         with:
-          name: LuaSF-macOS-AppleSilicon-arm64
+          name: LuaSF${{ matrix.variant_suffix }}-macOS-AppleSilicon-arm64
           path: output/packages/*.tar.gz
           if-no-files-found: error
           compression-level: 0

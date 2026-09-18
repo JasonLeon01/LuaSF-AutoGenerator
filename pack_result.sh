@@ -8,7 +8,6 @@ OUTPUT_DIR="$SCRIPT_DIR/output"
 BUILD_DIR="$OUTPUT_DIR/build"
 RESULT_DIR="$OUTPUT_DIR/result"
 EMBEDDED_RESULT_DIR="$RESULT_DIR/embedded"
-EXTENSION_RESULT_DIR="$RESULT_DIR/extension"
 PACKAGES_DIR="$OUTPUT_DIR/packages"
 STAGING_DIR="$PACKAGES_DIR/.staging"
 
@@ -19,11 +18,6 @@ fi
 
 if [ ! -d "$EMBEDDED_RESULT_DIR" ]; then
     echo "Missing output/result/embedded. Run sh collect_result.sh first." >&2
-    exit 1
-fi
-
-if [ ! -d "$EXTENSION_RESULT_DIR" ]; then
-    echo "Missing output/result/extension. Run sh collect_result.sh first." >&2
     exit 1
 fi
 
@@ -121,15 +115,20 @@ PLATFORM_ARCH=$(detect_arch)
 PLATFORM_COMPILER=$(detect_compiler)
 PLATFORM_TAG="${PLATFORM_OS}-${PLATFORM_ARCH}-${PLATFORM_COMPILER}"
 
-SOURCE_NAME=LuaSF-source
-EMBEDDED_NAME="LuaSF-embedded-${PLATFORM_TAG}"
-EXTENSION_NAME="LuaSF-extension-${PLATFORM_TAG}"
+SFML_VARIANT=$(cat "$SCRIPT_DIR/.luasf-sfml-variant" 2>/dev/null || true)
+VARIANT_SUFFIX=
+if [ -n "$SFML_VARIANT" ]; then
+    VARIANT_SUFFIX="-$SFML_VARIANT"
+fi
+
+SOURCE_NAME="LuaSF-source${VARIANT_SUFFIX}"
+EMBEDDED_NAME="LuaSF-embedded${VARIANT_SUFFIX}-${PLATFORM_TAG}"
 
 SOURCE_ARCHIVE="$PACKAGES_DIR/${SOURCE_NAME}.tar.gz"
 EMBEDDED_ARCHIVE="$PACKAGES_DIR/${EMBEDDED_NAME}.tar.gz"
-EXTENSION_ARCHIVE="$PACKAGES_DIR/${EXTENSION_NAME}.tar.gz"
 
 echo "Packing LuaSF redistributable archives..."
+echo "SFML variant: ${SFML_VARIANT:-default}"
 echo "Platform: $PLATFORM_TAG"
 echo "Packages: $PACKAGES_DIR"
 
@@ -142,16 +141,14 @@ find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 \
     ! -name build ! -name bin ! -name result ! -name packages \
     -exec cp -R {} "$STAGING_DIR/$SOURCE_NAME/" \;
 
-# Embedded / extension packages with named top-level folders.
-mkdir -p "$STAGING_DIR/$EMBEDDED_NAME" "$STAGING_DIR/$EXTENSION_NAME"
+# Embedded package with a named top-level folder.
+mkdir -p "$STAGING_DIR/$EMBEDDED_NAME"
 cp -R "$EMBEDDED_RESULT_DIR"/. "$STAGING_DIR/$EMBEDDED_NAME"/
-cp -R "$EXTENSION_RESULT_DIR"/. "$STAGING_DIR/$EXTENSION_NAME"/
 
 (
     cd "$STAGING_DIR"
     tar -czf "$SOURCE_ARCHIVE" "$SOURCE_NAME"
     tar -czf "$EMBEDDED_ARCHIVE" "$EMBEDDED_NAME"
-    tar -czf "$EXTENSION_ARCHIVE" "$EXTENSION_NAME"
 )
 
 rm -rf "$STAGING_DIR"
@@ -160,4 +157,3 @@ echo
 echo "Done."
 echo "Source: $SOURCE_ARCHIVE"
 echo "Embedded: $EMBEDDED_ARCHIVE"
-echo "Extension: $EXTENSION_ARCHIVE"

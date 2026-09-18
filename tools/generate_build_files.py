@@ -100,31 +100,6 @@ def copy_support_sources(project_root: Path, output_root: Path) -> None:
         copy_file(stub_dumper, tools_out / stub_dumper.name)
 
 
-def copy_dependencies(project_root: Path, output_root: Path) -> None:
-    source_root = project_root / "third_party"
-    dest_root = output_root / "third_party"
-    dest_root.mkdir(parents=True, exist_ok=True)
-
-    ignore = shutil.ignore_patterns(
-        ".git",
-        ".github",
-        ".vs",
-        "__pycache__",
-        "build",
-        "out",
-        "cmake-build-*",
-    )
-
-    for name in ("SFML", "Lua", "sol2"):
-        src = source_root / name
-        dst = dest_root / name
-        if not src.exists():
-            raise FileNotFoundError(f"missing dependency directory: {src}")
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst, ignore=ignore)
-
-
 def load_api(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -682,7 +657,6 @@ def render_outputs(
     project_name: str,
     target_name: str,
     module_name: str,
-    state_factory_name: str,
 ) -> None:
     sources = [entries[name].source_path for name in order]
     entry_source = rel(source_output, cmake_project_root)
@@ -708,7 +682,6 @@ def render_outputs(
     public_header_output.write_text(
         public_header_template.read_text(encoding="utf-8").format(
             module_name=module_name,
-            state_factory_name=state_factory_name,
         ),
         encoding="utf-8",
     )
@@ -717,7 +690,6 @@ def render_outputs(
     source_output.write_text(
         source_template.read_text(encoding="utf-8").format(
             module_name=module_name,
-            state_factory_name=state_factory_name,
             includes=includes,
             bind_calls=bind_calls,
         ),
@@ -744,9 +716,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-name", default="LuaSF")
     parser.add_argument("--target-name", default="LuaSF")
     parser.add_argument("--module-name", default="LuaSF")
-    parser.add_argument("--state-factory-name", default="LuaSF_create_state")
-    parser.add_argument("--copy-dependencies", dest="copy_dependencies", action="store_true", default=True)
-    parser.add_argument("--no-copy-dependencies", dest="copy_dependencies", action="store_false")
     parser.add_argument("--force-sort", action="store_true", help="Ignore output/binding_order.json and recompute the order.")
     return parser.parse_args()
 
@@ -761,8 +730,6 @@ def main() -> int:
 
     api = load_api(api_path)
     copy_support_sources(project_root, output_root)
-    if args.copy_dependencies:
-        copy_dependencies(project_root, output_root)
     write_callback_codec_manifest(callback_codecs_output)
     entries = discover_entries(api, project_root, output_root)
     order, used_cache = sorted_order(project_root, api_path, cache_path, api, entries, args.force_sort)
@@ -779,15 +746,13 @@ def main() -> int:
         project_name=args.project_name,
         target_name=args.target_name,
         module_name=args.module_name,
-        state_factory_name=args.state_factory_name,
     )
 
     cache_note = "using cached order" if used_cache else "after topological sort"
-    dependency_note = " with copied dependencies" if args.copy_dependencies else ""
     print(
         f"Generated output/CMakeLists.txt, output/LuaSF.cpp, output/include/LuaSF.hpp, "
         f"and output/callback_codecs.json "
-        f"for {len(order)} binding units ({cache_note}){dependency_note}."
+        f"for {len(order)} binding units ({cache_note})."
     )
     return 0
 

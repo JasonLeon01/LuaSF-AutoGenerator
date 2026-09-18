@@ -7,17 +7,11 @@ set "OUTPUT_DIR=%CD%\output"
 set "BUILD_DIR=%OUTPUT_DIR%\build"
 set "RESULT_DIR=%OUTPUT_DIR%\result"
 set "EMBEDDED_RESULT_DIR=%RESULT_DIR%\embedded"
-set "EXTENSION_RESULT_DIR=%RESULT_DIR%\extension"
 set "PACKAGES_DIR=%OUTPUT_DIR%\packages"
 set "STAGING_DIR=%PACKAGES_DIR%\.staging"
 
 if not exist "%EMBEDDED_RESULT_DIR%" (
     echo Missing output\result\embedded. Run collect_result.bat first.
-    exit /b 1
-)
-
-if not exist "%EXTENSION_RESULT_DIR%" (
-    echo Missing output\result\extension. Run collect_result.bat first.
     exit /b 1
 )
 
@@ -64,21 +58,23 @@ call :normalize_compiler "%PLATFORM_COMPILER%"
 set "PLATFORM_COMPILER=%NORMALIZED%"
 
 set "PLATFORM_TAG=%PLATFORM_OS%-%PLATFORM_ARCH%-%PLATFORM_COMPILER%"
-set "SOURCE_NAME=LuaSF-source"
-set "EMBEDDED_NAME=LuaSF-embedded-%PLATFORM_TAG%"
-set "EXTENSION_NAME=LuaSF-extension-%PLATFORM_TAG%"
+set "SFML_VARIANT="
+if exist "%CD%\.luasf-sfml-variant" set /p SFML_VARIANT=<"%CD%\.luasf-sfml-variant"
+set "VARIANT_SUFFIX="
+if not "%SFML_VARIANT%"=="" set "VARIANT_SUFFIX=-%SFML_VARIANT%"
+set "SOURCE_NAME=LuaSF-source%VARIANT_SUFFIX%"
+set "EMBEDDED_NAME=LuaSF-embedded%VARIANT_SUFFIX%-%PLATFORM_TAG%"
 set "SOURCE_ZIP=%PACKAGES_DIR%\%SOURCE_NAME%.zip"
 set "EMBEDDED_ZIP=%PACKAGES_DIR%\%EMBEDDED_NAME%.zip"
-set "EXTENSION_ZIP=%PACKAGES_DIR%\%EXTENSION_NAME%.zip"
 
 echo Packing LuaSF redistributable archives...
+if "%SFML_VARIANT%"=="" (echo SFML variant: default) else (echo SFML variant: %SFML_VARIANT%)
 echo Platform: %PLATFORM_TAG%
 echo Packages: %PACKAGES_DIR%
 
 if exist "%PACKAGES_DIR%" rmdir /s /q "%PACKAGES_DIR%"
 mkdir "%STAGING_DIR%\%SOURCE_NAME%"
 mkdir "%STAGING_DIR%\%EMBEDDED_NAME%"
-mkdir "%STAGING_DIR%\%EXTENSION_NAME%"
 
 rem Source package: output\ without build, bin, result, packages.
 for /f "delims=" %%I in ('dir /b /a "%OUTPUT_DIR%"') do (
@@ -92,7 +88,6 @@ for /f "delims=" %%I in ('dir /b /a "%OUTPUT_DIR%"') do (
 )
 
 xcopy /e /i /q /y "%EMBEDDED_RESULT_DIR%\*" "%STAGING_DIR%\%EMBEDDED_NAME%\" >nul
-xcopy /e /i /q /y "%EXTENSION_RESULT_DIR%\*" "%STAGING_DIR%\%EXTENSION_NAME%\" >nul
 
 powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%SOURCE_NAME%' -DestinationPath '%SOURCE_ZIP%' -CompressionLevel Optimal"
 if errorlevel 1 (
@@ -104,11 +99,6 @@ if errorlevel 1 (
     echo Failed to create "%EMBEDDED_ZIP%".
     exit /b 1
 )
-powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%EXTENSION_NAME%' -DestinationPath '%EXTENSION_ZIP%' -CompressionLevel Optimal"
-if errorlevel 1 (
-    echo Failed to create "%EXTENSION_ZIP%".
-    exit /b 1
-)
 
 rmdir /s /q "%STAGING_DIR%"
 
@@ -116,7 +106,6 @@ echo.
 echo Done.
 echo Source: %SOURCE_ZIP%
 echo Embedded: %EMBEDDED_ZIP%
-echo Extension: %EXTENSION_ZIP%
 exit /b 0
 
 :normalize_os

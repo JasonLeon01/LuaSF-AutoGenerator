@@ -6,37 +6,53 @@ LuaSF AutoGenerator generates a CMake-based Lua module that exposes SFML to Lua 
 
 The generated Lua module is named `LuaSF`. In CMake, consumers link against `LuaSF::LuaSF`.
 
+LuaSF is a binder only. It does not bundle Lua, sol2 or SFML, and it does not create or close the `lua_State`: the host owns the VM and hands it to LuaSF through `LuaSF_register`.
+
 ## Requirements
 
 - CMake 3.21 or newer for the consumer example below.
 - A C++20-capable compiler when building LuaSF from source.
 - Python 3.12 or newer for generation scripts.
 
-The bundled dependency versions are recorded in `versions.conf`.
+The SFML variants and the bundled dependency versions are recorded in `versions.conf`.
+
+## SFML Variants
+
+LuaSF binds one SFML build at a time. Select the variant with the second positional argument of `init` and `build`:
+
+| Argument | SFML source |
+| --- | --- |
+| *(omitted)* | upstream SFML `SFML_VERSION` |
+| `ME` | `SFML_ME_REPOSITORY` at `SFML_ME_TAG` |
+| `ME-OH` | `SFML_ME_OH_REPOSITORY` at `SFML_ME_OH_TAG` |
+
+The variant only selects which SFML is downloaded and which bindings are generated. Platform differences (iOS, Android, OHOS) are decided by `CMAKE_SYSTEM_NAME`, so a single source tree covers every variant.
 
 ## Build LuaSF
 
 Initialise dependencies once:
 
 ```bat
-init.bat
+init.bat ME
 ```
 
 ```sh
-sh init.sh
+sh init.sh ME
 ```
 
 Generate and build the LuaSF CMake project:
 
 ```bat
-build.bat Release
+build.bat Release ME
 ```
 
 ```sh
-sh build.sh Release
+sh build.sh Release ME
 ```
 
-This creates the generated source project under `output/` and builds the embedded LuaSF dynamic library, the plain Lua extension module, and the Lua language-server stub.
+This creates the generated source project under `output/` and builds the embedded LuaSF dynamic library, the host `luac`, and the Lua language-server stub.
+
+Switching variants replaces `third_party/SFML`; `init` and `build` both verify that the checked-out SFML matches the requested variant before doing any work.
 
 On macOS arm64 with AppleClang, Release builds use `-Os` for the binding units and module registration entry point, while retaining Release LTO. The callback codec, state lifecycle support, and dependencies keep their existing optimization settings. Other platforms, architectures, compilers, and configurations retain their existing optimization settings.
 
@@ -50,9 +66,9 @@ collect_result.bat Release
 sh collect_result.sh Release
 ```
 
-The collected packages are written to `output/result/embedded/` and `output/result/extension/`.
+The collected package is written to `output/result/embedded/`.
 
-To pack redistributable zip archives after collect:
+To pack redistributable archives after collect:
 
 ```bat
 pack_result.bat
@@ -64,36 +80,22 @@ sh pack_result.sh
 
 Archives are written to `output/packages/`:
 
-- `LuaSF-source.{tar.gz|zip}` — generated source project from `output/`, including `callback_codecs.json`, without `bin/` or `build/`
-- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — embedded package, including `callback_codecs.json` and its matching `sfml_api.json` validation snapshot
-- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — Lua extension package
+| Variant | Source archive | Embedded archive |
+| --- | --- | --- |
+| upstream SFML | `LuaSF-source.{tar.gz\|zip}` | `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
+| `ME` | `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
+| `ME-OH` | `LuaSF-source-ME-OH.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 
 `pack_result.sh` creates `.tar.gz` archives. `pack_result.bat` creates `.zip` archives.
 
 ## Use From A CMake Project
 
-There are three supported integration styles:
+There are two supported integration styles:
 
 - **Packaged integration**: copy `output/result/embedded/` into your project, for example as `LuaSF/`.
 - **Source integration**: copy or vendor the generated `output/` source project into your project, for example as `LuaSF/`.
-- **Plain Lua extension**: copy or reference `output/result/extension/bin/` from Lua and run `require("LuaSF")`.
 
-The CMake integration target for embedded use is `LuaSF::LuaSF`. The plain Lua extension is a separate build output.
-
-### Plain Lua Extension
-
-Use this when a normal Lua runtime should load LuaSF with `require("LuaSF")`.
-
-The extension build is selected by the `LUASF_LUA_EXTENSION` macro. The generated `LuaSF_lua_extension` CMake target defines this macro and exports `luaopen_LuaSF`. The default `LuaSF` / `LuaSF::LuaSF` target does not define this macro, so source integration in an IDE remains the embedded version unless you explicitly build the extension target or define the macro yourself.
-
-After collecting results, put `output/result/extension/bin/` on `package.cpath`:
-
-```lua
-package.cpath = [[path/to/extension/bin/?.dll;]] .. package.cpath
-local sf = require("LuaSF")
-```
-
-The extension package does not bundle `lua.dll`; it is loaded by the host Lua runtime and must match the extension's Lua ABI.
+The CMake integration target for embedded use is `LuaSF::LuaSF`.
 
 ### Packaged Integration
 
@@ -125,12 +127,21 @@ luasf_copy_runtime_dlls(SFLua)
 
 Use this when you have copied or vendored the generated `output/` source project into your project.
 
+The source project has no vendored dependencies. Point it at your own Lua, sol2 and SFML checkouts through the `LUASF_LUA_ROOT`, `LUASF_SOL2_ROOT` and `LUASF_SFML_ROOT` cache variables; all three are required:
+
+- `LUASF_LUA_ROOT` — Lua source directory containing `src/lua.h`.
+- `LUASF_SOL2_ROOT` — sol2 source directory containing `include/sol2/sol.hpp`. LuaSF needs the `sol2` `optional::emplace` fix from `cmake/sol/pr1606.patch`, which the LuaSF repository applies to its own checkout; apply it to yours as well, or your build will not compile.
+- `LUASF_SFML_ROOT` — SFML source project. When your project already provides the `sfml-*` targets, LuaSF reuses them instead of adding the directory again.
+
 ```cmake
 cmake_minimum_required(VERSION 3.21)
 
 project(SFLua LANGUAGES C CXX)
 
 set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/stub/LuaSF.d.lua")
+set(LUASF_LUA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Lua")
+set(LUASF_SOL2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sol2")
+set(LUASF_SFML_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SFML")
 
 add_subdirectory(LuaSF)
 
@@ -139,7 +150,7 @@ add_executable(SFLua main.cpp)
 target_compile_features(SFLua PRIVATE cxx_std_17)
 
 target_include_directories(SFLua PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/LuaSF/third_party/Lua/src"
+    "${LUASF_LUA_ROOT}/src"
 )
 
 target_compile_definitions(SFLua PRIVATE
@@ -158,13 +169,16 @@ luasf_copy_runtime_dlls(SFLua)
 
 ## C++ Example
 
-After linking against `LuaSF::LuaSF`, this example creates a Lua state with all LuaSF bindings registered, then runs `Entry.lua` from the `Scripts/` folder. `SCRIPTS_DIR` is baked at build time via `target_compile_definitions` (shown in the CMake examples above), so the path works regardless of the current working directory.
+LuaSF never creates the Lua VM. The host creates the state, opens the standard libraries, registers the LuaSF bindings, and closes the state when it is done. `SCRIPTS_DIR` is baked at build time via `target_compile_definitions` (shown in the CMake examples above), so the path works regardless of the current working directory.
 
 ```cpp
+#include <cstdio>
+
 #include <LuaSF.hpp>
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
+#include <lualib.h>
 }
 
 #ifndef SCRIPTS_DIR
@@ -173,11 +187,20 @@ extern "C" {
 
 int main()
 {
-    lua_State* L = LuaSF_create_state();
+    lua_State* L = luaL_newstate();
     if (L == nullptr)
         return 1;
 
+    luaL_openlibs(L);
+
     int result = 0;
+    if (LuaSF_initialize_state(L) != 0 || LuaSF_register(L) != 0)
+    {
+        std::fprintf(stderr, "Lua error: failed to register the LuaSF bindings\n");
+        lua_close(L);
+        return 1;
+    }
+
     if (LuaSF_enter_state(L) == 0)
     {
         result = 1;
@@ -186,7 +209,7 @@ int main()
     {
         if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
         {
-            fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
+            std::fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
             result = 1;
         }
         LuaSF_leave_state(L);
@@ -309,11 +332,13 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Third-Party Licenses
 
-Bundled dependency versions are recorded in `versions.conf`. Their licenses are:
+LuaSF does not ship these dependencies; the version table records which variants and releases the build scripts download. Their licenses are:
 
 | Dependency | Version | License |
 | --- | --- | --- |
 | [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `310ME-iOSJoystick` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
+| [SFML-ME-OH](https://github.com/JasonLeon01/SFML-ME) | `310-ME-OH-GLESVER` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 | [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
 

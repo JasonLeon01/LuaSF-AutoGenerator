@@ -34,60 +34,15 @@ extern "C" LUASF_API int {module_name}_register(lua_State* state)
     return 0;
 }}
 
-#if defined(LUASF_LUA_EXTENSION)
-extern "C" LUASF_API int luaopen_{module_name}(lua_State* state)
+extern "C" LUASF_API int {module_name}_write_stub(lua_State* state,
+                                                  const char* path)
 {{
-    if (state == nullptr)
-    {{
-        return 0;
-    }}
-
-    if ({module_name}_register(state) != 0)
-    {{
-        return luaL_error(state, "failed to register {module_name}");
-    }}
-
-    lua_getglobal(state, "sf");
-    return 1;
-}}
-#endif
-
-extern "C" LUASF_API lua_State* {state_factory_name}()
-{{
-    lua_State* state = luaL_newstate();
-    if (state == nullptr)
-    {{
-        return nullptr;
-    }}
-
-    luaL_openlibs(state);
-
-    if ({module_name}_register(state) != 0)
-    {{
-        LuaSF_shutdown_state(state);
-        lua_close(state);
-        return nullptr;
-    }}
-
-    return state;
-}}
-
-extern "C" LUASF_API int {module_name}_write_stub(const char* path)
-{{
-    if (path == nullptr || !lua_sf::stub::begin(path))
+    if (state == nullptr || path == nullptr || !lua_sf::stub::begin(path))
     {{
         return 1;
     }}
 
-    lua_State* state = {state_factory_name}();
-    if (state == nullptr)
-    {{
-        lua_sf::stub::end();
-        return 1;
-    }}
-
-    LuaSF_shutdown_state(state);
-    lua_close(state);
+    const int result = {module_name}_register(state);
     lua_sf::stub::end();
-    return 0;
+    return result;
 }}

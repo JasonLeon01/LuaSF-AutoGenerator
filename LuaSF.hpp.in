@@ -34,8 +34,5 @@ extern "C" LUASF_API void LuaSF_leave_state(lua_State* state) noexcept;
 extern "C" LUASF_API int LuaSF_take_deferred_callback_error(
     lua_State* state, char* buffer, std::size_t capacity);
 extern "C" LUASF_API int {module_name}_register(lua_State* state);
-#if defined(LUASF_LUA_EXTENSION)
-extern "C" LUASF_API int luaopen_{module_name}(lua_State* state);
-#endif
-extern "C" LUASF_API lua_State* {state_factory_name}();
-extern "C" LUASF_API int {module_name}_write_stub(const char* path);
+extern "C" LUASF_API int {module_name}_write_stub(lua_State* state,
+                                                  const char* path);

@@ -4,7 +4,7 @@ rem
 rem Usage:
 rem   call download_lib.bat DisplayName URL ArchiveFile ExtractedFolder TargetFolder [SHA256]
 
-setlocal
+setlocal EnableDelayedExpansion
 
 set "LIB_NAME=%~1"
 set "URL=%~2"

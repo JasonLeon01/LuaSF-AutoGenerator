@@ -6,37 +6,53 @@ LuaSF AutoGenerator 会生成一个基于 CMake 的 Lua 模块，通过 sol2 将
 
 生成的 Lua 模块名为 `LuaSF`。在 CMake 中，嵌入式使用方链接 `LuaSF::LuaSF`。
 
+LuaSF 只是一个绑定器。它不自带 Lua、sol2 和 SFML，也不创建或关闭 `lua_State`：VM 由宿主持有，并通过 `LuaSF_register` 交给 LuaSF。
+
 ## 环境要求
 
 - 下方消费端示例需要 CMake 3.21 或更新版本。
 - 从源码构建 LuaSF 时需要支持 C++20 的编译器。
 - 生成脚本需要 Python 3.12 或更新版本。
 
-依赖版本记录在 `versions.conf` 中。
+SFML 变体与依赖版本记录在 `versions.conf` 中。
+
+## SFML 变体
+
+LuaSF 一次只绑定一份 SFML 构建产物。通过 `init` 和 `build` 的第二个位置参数选择变体：
+
+| 参数 | SFML 来源 |
+| --- | --- |
+| *(省略)* | 上游 SFML `SFML_VERSION` |
+| `ME` | `SFML_ME_REPOSITORY` 的 `SFML_ME_TAG` |
+| `ME-OH` | `SFML_ME_OH_REPOSITORY` 的 `SFML_ME_OH_TAG` |
+
+变体只决定下载哪份 SFML、生成哪套绑定。平台差异（iOS、Android、OHOS）由 `CMAKE_SYSTEM_NAME` 决定，因此同一份源码覆盖所有变体。
 
 ## 构建 LuaSF
 
 首次初始化依赖：
 
 ```bat
-init.bat
+init.bat ME
 ```
 
 ```sh
-sh init.sh
+sh init.sh ME
 ```
 
 生成并构建 LuaSF CMake 工程：
 
 ```bat
-build.bat Release
+build.bat Release ME
 ```
 
 ```sh
-sh build.sh Release
+sh build.sh Release ME
 ```
 
-这会在 `output/` 下创建生成后的源码工程，并构建嵌入式 LuaSF 动态库、普通 Lua 扩展模块以及 Lua language-server stub。
+这会在 `output/` 下创建生成后的源码工程，并构建嵌入式 LuaSF 动态库、宿主 `luac` 以及 Lua language-server stub。
+
+切换变体会替换 `third_party/SFML`；`init` 和 `build` 都会在开始工作前校验当前检出的 SFML 是否与请求的变体一致。
 
 在使用 AppleClang 的 macOS arm64 构建中，Release 会对绑定单元和模块注册入口使用 `-Os`，同时保留 Release LTO。回调编解码、状态生命周期支持代码以及依赖库保持原有优化设置。其他平台、架构、编译器和构建配置也保持原有优化设置。
 
@@ -50,9 +66,9 @@ collect_result.bat Release
 sh collect_result.sh Release
 ```
 
-收集后的包会写入 `output/result/embedded/` 和 `output/result/extension/`。
+收集后的包会写入 `output/result/embedded/`。
 
-收集完成后打包可分发 zip：
+收集完成后打包可分发压缩包：
 
 ```bat
 pack_result.bat
@@ -64,36 +80,22 @@ sh pack_result.sh
 
 压缩包会写入 `output/packages/`：
 
-- `LuaSF-source.{tar.gz|zip}` — 来自 `output/` 的生成源码工程，包含 `callback_codecs.json`，不含 `bin/` 和 `build/`
-- `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — 嵌入式包，包含 `callback_codecs.json` 及其匹配的 `sfml_api.json` 校验快照
-- `LuaSF-extension-{OS}-{ARCH}-{COMPILER}.{tar.gz|zip}` — Lua 扩展包
+| 变体 | 源码包 | 嵌入式包 |
+| --- | --- | --- |
+| 上游 SFML | `LuaSF-source.{tar.gz\|zip}` | `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
+| `ME` | `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
+| `ME-OH` | `LuaSF-source-ME-OH.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 
 `pack_result.sh` 生成 `.tar.gz` 压缩包，`pack_result.bat` 生成 `.zip` 压缩包。
 
 ## 从 CMake 工程使用
 
-支持三种接入方式：
+支持两种接入方式：
 
 - **包集成**：将 `output/result/embedded/` 复制到你的工程中，例如复制为 `LuaSF/`。
 - **源码集成**：将生成的 `output/` 源码工程复制或 vendor 到你的工程中，例如复制为 `LuaSF/`。
-- **普通 Lua 扩展**：在 Lua 中引用或复制 `output/result/extension/bin/`，然后运行 `require("LuaSF")`。
 
-嵌入式使用的 CMake 集成目标是 `LuaSF::LuaSF`。普通 Lua 扩展是单独的构建产物。
-
-### 普通 Lua 扩展
-
-当普通 Lua 运行时需要通过 `require("LuaSF")` 加载 LuaSF 时，使用这种方式。
-
-扩展版本由 `LUASF_LUA_EXTENSION` 宏选择。生成的 `LuaSF_lua_extension` CMake target 会定义这个宏并导出 `luaopen_LuaSF`。默认的 `LuaSF` / `LuaSF::LuaSF` target 不定义这个宏，所以在 IDE 中做源码集成时，除非你显式构建扩展 target 或自己定义这个宏，否则默认仍然是嵌入式版本。
-
-收集结果后，将 `output/result/extension/bin/` 加入 `package.cpath`：
-
-```lua
-package.cpath = [[path/to/extension/bin/?.dll;]] .. package.cpath
-local sf = require("LuaSF")
-```
-
-扩展包不打包 `lua.dll`；它由宿主 Lua 运行时加载，并且必须与扩展使用的 Lua ABI 匹配。
+嵌入式使用的 CMake 集成目标是 `LuaSF::LuaSF`。
 
 ### 包集成
 
@@ -125,12 +127,21 @@ luasf_copy_runtime_dlls(SFLua)
 
 当你已经复制或 vendor 了生成的 `output/` 源码工程时，使用这种方式。
 
+源码工程不自带依赖。通过 `LUASF_LUA_ROOT`、`LUASF_SOL2_ROOT` 和 `LUASF_SFML_ROOT` 三个 cache 变量指向你自己的 Lua、sol2 和 SFML 检出目录，三者都是必需的：
+
+- `LUASF_LUA_ROOT` — Lua 源码目录，包含 `src/lua.h`。
+- `LUASF_SOL2_ROOT` — sol2 源码目录，包含 `include/sol2/sol.hpp`。LuaSF 需要 `cmake/sol/pr1606.patch` 中的 sol2 `optional::emplace` 修复；LuaSF 仓库会对自己那份检出打上补丁，你的检出也需要打，否则编译不过。
+- `LUASF_SFML_ROOT` — SFML 源码工程。如果你的工程已经提供 `sfml-*` target，LuaSF 会复用它们，而不会重复 add_subdirectory。
+
 ```cmake
 cmake_minimum_required(VERSION 3.21)
 
 project(SFLua LANGUAGES C CXX)
 
 set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/stub/LuaSF.d.lua")
+set(LUASF_LUA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Lua")
+set(LUASF_SOL2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sol2")
+set(LUASF_SFML_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SFML")
 
 add_subdirectory(LuaSF)
 
@@ -139,7 +150,7 @@ add_executable(SFLua main.cpp)
 target_compile_features(SFLua PRIVATE cxx_std_17)
 
 target_include_directories(SFLua PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/LuaSF/third_party/Lua/src"
+    "${LUASF_LUA_ROOT}/src"
 )
 
 target_compile_definitions(SFLua PRIVATE
@@ -158,13 +169,16 @@ luasf_copy_runtime_dlls(SFLua)
 
 ## C++ 示例
 
-链接 `LuaSF::LuaSF` 后，这个示例会创建一个已注册所有 LuaSF 绑定的 Lua 状态，然后运行 `Scripts/` 文件夹中的 `Entry.lua`。`SCRIPTS_DIR` 会通过上方 CMake 示例中的 `target_compile_definitions` 在构建时写入，因此路径不依赖当前工作目录。
+LuaSF 从不创建 Lua VM。宿主创建 state、打开标准库、注册 LuaSF 绑定，并在结束时关闭 state。`SCRIPTS_DIR` 会通过上方 CMake 示例中的 `target_compile_definitions` 在构建时写入，因此路径不依赖当前工作目录。
 
 ```cpp
+#include <cstdio>
+
 #include <LuaSF.hpp>
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
+#include <lualib.h>
 }
 
 #ifndef SCRIPTS_DIR
@@ -173,11 +187,20 @@ extern "C" {
 
 int main()
 {
-    lua_State* L = LuaSF_create_state();
+    lua_State* L = luaL_newstate();
     if (L == nullptr)
         return 1;
 
+    luaL_openlibs(L);
+
     int result = 0;
+    if (LuaSF_initialize_state(L) != 0 || LuaSF_register(L) != 0)
+    {
+        std::fprintf(stderr, "Lua error: failed to register the LuaSF bindings\n");
+        lua_close(L);
+        return 1;
+    }
+
     if (LuaSF_enter_state(L) == 0)
     {
         result = 1;
@@ -186,7 +209,7 @@ int main()
     {
         if (luaL_dofile(L, SCRIPTS_DIR "/Entry.lua") != LUA_OK)
         {
-            fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
+            std::fprintf(stderr, "Lua error: %s\n", lua_tostring(L, -1));
             result = 1;
         }
         LuaSF_leave_state(L);
@@ -309,11 +332,13 @@ LuaSF 会被构建为动态库。运行时，可执行程序必须能够加载 L
 
 ## Third-Party Licenses
 
-打包依赖的版本记录在 `versions.conf` 中，其许可证如下：
+LuaSF 不附带这些依赖；版本表记录构建脚本会下载哪些变体与发行版。其许可证如下：
 
 | 依赖 | 版本 | 许可证 |
 | --- | --- | --- |
 | [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `310ME-iOSJoystick` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
+| [SFML-ME-OH](https://github.com/JasonLeon01/SFML-ME) | `310-ME-OH-GLESVER` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 | [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
 

@@ -14,6 +14,21 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  EXPECTED_RELEASE_ASSETS: >-
+    LuaSF-source.zip
+    LuaSF-embedded-Windows-x64-MSVC.zip
+    LuaSF-source-ME.zip
+    LuaSF-embedded-ME-Windows-x64-MSVC.zip
+    LuaSF-source-ME-OH.zip
+    LuaSF-embedded-ME-OH-Windows-x64-MSVC.zip
+    LuaSF-source.tar.gz
+    LuaSF-embedded-macOS-ARM64-clang.tar.gz
+    LuaSF-source-ME.tar.gz
+    LuaSF-embedded-ME-macOS-ARM64-clang.tar.gz
+    LuaSF-source-ME-OH.tar.gz
+    LuaSF-embedded-ME-OH-macOS-ARM64-clang.tar.gz
+
 jobs:
   build-packages:
     name: Build release packages
@@ -35,31 +50,18 @@ jobs:
       RELEASE_TAG: ${{ github.ref_name }}
 
     steps:
-      - name: Download Windows packages
+      - name: Download packages
         uses: actions/download-artifact@v8
         with:
-          name: LuaSF-Windows-VS2022-x64
           path: ${{ env.RELEASE_ASSETS_DIR }}
-
-      - name: Download macOS packages
-        uses: actions/download-artifact@v8
-        with:
-          name: LuaSF-macOS-AppleSilicon-arm64
-          path: ${{ env.RELEASE_ASSETS_DIR }}
+          merge-multiple: true
 
       - name: Verify release assets
         shell: bash
         run: |
           set -euo pipefail
 
-          expected_files=(
-              'LuaSF-source.zip'
-              'LuaSF-embedded-Windows-x64-MSVC.zip'
-              'LuaSF-extension-Windows-x64-MSVC.zip'
-              'LuaSF-source.tar.gz'
-              'LuaSF-embedded-macOS-ARM64-clang.tar.gz'
-              'LuaSF-extension-macOS-ARM64-clang.tar.gz'
-          )
+          read -ra expected_files <<< "$EXPECTED_RELEASE_ASSETS"
 
           for filename in "${expected_files[@]}"; do
               path="$RELEASE_ASSETS_DIR/$filename"
@@ -94,18 +96,19 @@ jobs:
               exit 1
           fi
 
-      - name: Publish release with six assets
+      - name: Publish release with twelve assets
         shell: bash
         run: |
           set -euo pipefail
 
+          read -ra expected_files <<< "$EXPECTED_RELEASE_ASSETS"
+          args=()
+          for filename in "${expected_files[@]}"; do
+              args+=("$RELEASE_ASSETS_DIR/$filename")
+          done
+
           gh release create "$RELEASE_TAG" \
-              "$RELEASE_ASSETS_DIR/LuaSF-source.zip" \
-              "$RELEASE_ASSETS_DIR/LuaSF-embedded-Windows-x64-MSVC.zip" \
-              "$RELEASE_ASSETS_DIR/LuaSF-extension-Windows-x64-MSVC.zip" \
-              "$RELEASE_ASSETS_DIR/LuaSF-source.tar.gz" \
-              "$RELEASE_ASSETS_DIR/LuaSF-embedded-macOS-ARM64-clang.tar.gz" \
-              "$RELEASE_ASSETS_DIR/LuaSF-extension-macOS-ARM64-clang.tar.gz" \
+              "${args[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --generate-notes
