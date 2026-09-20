@@ -1,8 +1,21 @@
 #!/usr/bin/env sh
 set -eu
 
+# Keep macOS AppleDouble metadata out of the portable source archive.
+export COPYFILE_DISABLE=1
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
+
+SOURCE_ONLY=0
+case "$#:${1:-}" in
+    0:) ;;
+    1:--source-only) SOURCE_ONLY=1 ;;
+    *)
+        echo "Usage: sh pack_result.sh [--source-only]" >&2
+        exit 2
+        ;;
+esac
 
 OUTPUT_DIR="$SCRIPT_DIR/output"
 BUILD_DIR="$OUTPUT_DIR/build"
@@ -10,30 +23,33 @@ RESULT_DIR="$OUTPUT_DIR/result"
 EMBEDDED_RESULT_DIR="$RESULT_DIR/embedded"
 PACKAGES_DIR="$OUTPUT_DIR/packages"
 STAGING_DIR="$PACKAGES_DIR/.staging"
+if [ "$SOURCE_ONLY" -eq 1 ]; then
+    STAGING_DIR="$PACKAGES_DIR/.staging-source"
+fi
 
 if ! command -v tar >/dev/null 2>&1; then
     echo "Missing tar. Install tar and retry." >&2
     exit 1
 fi
 
-if [ ! -d "$EMBEDDED_RESULT_DIR" ]; then
-    echo "Missing output/result/embedded. Run sh collect_result.sh first." >&2
-    exit 1
-fi
+for source_file in callback_codecs.json sfml_api.json; do
+    if [ ! -f "$OUTPUT_DIR/LuaSF/$source_file" ]; then
+        echo "Missing output/LuaSF/$source_file. Run sh build.sh first." >&2
+        exit 1
+    fi
+done
 
-if [ ! -f "$OUTPUT_DIR/callback_codecs.json" ]; then
-    echo "Missing output/callback_codecs.json. Run sh build.sh first." >&2
-    exit 1
-fi
-
-if [ ! -f "$EMBEDDED_RESULT_DIR/callback_codecs.json" ]; then
-    echo "Missing embedded callback codec manifest. Run sh collect_result.sh first." >&2
-    exit 1
-fi
-
-if [ ! -f "$EMBEDDED_RESULT_DIR/sfml_api.json" ]; then
-    echo "Missing embedded SFML API snapshot. Run sh collect_result.sh first." >&2
-    exit 1
+if [ "$SOURCE_ONLY" -eq 0 ]; then
+    if [ ! -d "$EMBEDDED_RESULT_DIR" ]; then
+        echo "Missing output/result/embedded. Run sh collect_result.sh first." >&2
+        exit 1
+    fi
+    for embedded_file in callback_codecs.json sfml_api.json; do
+        if [ ! -f "$EMBEDDED_RESULT_DIR/$embedded_file" ]; then
+            echo "Missing embedded $embedded_file. Run sh collect_result.sh first." >&2
+            exit 1
+        fi
+    done
 fi
 
 cmake_cache_value() {
@@ -110,10 +126,13 @@ detect_compiler() {
     normalize_compiler "$value"
 }
 
-PLATFORM_OS=$(detect_os)
-PLATFORM_ARCH=$(detect_arch)
-PLATFORM_COMPILER=$(detect_compiler)
-PLATFORM_TAG="${PLATFORM_OS}-${PLATFORM_ARCH}-${PLATFORM_COMPILER}"
+PLATFORM_TAG=
+if [ "$SOURCE_ONLY" -eq 0 ]; then
+    PLATFORM_OS=$(detect_os)
+    PLATFORM_ARCH=$(detect_arch)
+    PLATFORM_COMPILER=$(detect_compiler)
+    PLATFORM_TAG="${PLATFORM_OS}-${PLATFORM_ARCH}-${PLATFORM_COMPILER}"
+fi
 
 SFML_VARIANT=$(cat "$SCRIPT_DIR/.luasf-sfml-variant" 2>/dev/null || true)
 VARIANT_SUFFIX=
@@ -121,7 +140,11 @@ if [ -n "$SFML_VARIANT" ]; then
     VARIANT_SUFFIX="-$SFML_VARIANT"
 fi
 
-SOURCE_NAME="LuaSF-source${VARIANT_SUFFIX}"
+SOURCE_VARIANT_SUFFIX=$VARIANT_SUFFIX
+if [ "$SFML_VARIANT" = "ME-OH" ]; then
+    SOURCE_VARIANT_SUFFIX=-ME
+fi
+SOURCE_NAME="LuaSF-source${SOURCE_VARIANT_SUFFIX}"
 EMBEDDED_NAME="LuaSF-embedded${VARIANT_SUFFIX}-${PLATFORM_TAG}"
 
 SOURCE_ARCHIVE="$PACKAGES_DIR/${SOURCE_NAME}.tar.gz"
@@ -129,40 +152,58 @@ EMBEDDED_ARCHIVE="$PACKAGES_DIR/${EMBEDDED_NAME}.tar.gz"
 
 echo "Packing LuaSF redistributable archives..."
 echo "SFML variant: ${SFML_VARIANT:-default}"
-echo "Platform: $PLATFORM_TAG"
+if [ "$SOURCE_ONLY" -eq 0 ]; then
+    echo "Platform: $PLATFORM_TAG"
+fi
 echo "Packages: $PACKAGES_DIR"
 
-rm -rf "$PACKAGES_DIR"
+if [ "$SOURCE_ONLY" -eq 0 ]; then
+    rm -rf "$PACKAGES_DIR"
+else
+    rm -rf "$STAGING_DIR"
+fi
 mkdir -p "$STAGING_DIR"
 
-# Source package: output/ without build, bin, result, packages.
+# Source archives contain only the two reusable CMake source projects.
 # ME-OH consumes the ME source package; only its embedded package is distinct.
-if [ "$SFML_VARIANT" != "ME-OH" ]; then
-    mkdir -p "$STAGING_DIR/$SOURCE_NAME"
-    find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 \
-        ! -name build ! -name bin ! -name result ! -name packages \
-        -exec cp -R {} "$STAGING_DIR/$SOURCE_NAME/" \;
+if [ "$SFML_VARIANT" != "ME-OH" ] || [ "$SOURCE_ONLY" -eq 1 ]; then
+    for source_project in LuaSF LuaGlue; do
+        if [ ! -f "$OUTPUT_DIR/$source_project/CMakeLists.txt" ]; then
+            echo "Missing source project $source_project. Run sh build.sh first." >&2
+            exit 1
+        fi
+        mkdir -p "$STAGING_DIR/$source_project"
+        (cd "$OUTPUT_DIR/$source_project" && tar --exclude=build --exclude=.git --exclude=__pycache__ --exclude=.cache -cf - .) |
+            (cd "$STAGING_DIR/$source_project" && tar -xf -)
+    done
 fi
 
 # Embedded package with a named top-level folder.
-mkdir -p "$STAGING_DIR/$EMBEDDED_NAME"
-cp -R "$EMBEDDED_RESULT_DIR"/. "$STAGING_DIR/$EMBEDDED_NAME"/
+if [ "$SOURCE_ONLY" -eq 0 ]; then
+    mkdir -p "$STAGING_DIR/$EMBEDDED_NAME"
+    cp -R "$EMBEDDED_RESULT_DIR"/. "$STAGING_DIR/$EMBEDDED_NAME"/
+fi
 
 (
     cd "$STAGING_DIR"
-    if [ "$SFML_VARIANT" != "ME-OH" ]; then
-        tar -czf "$SOURCE_ARCHIVE" "$SOURCE_NAME"
+    if [ "$SFML_VARIANT" != "ME-OH" ] || [ "$SOURCE_ONLY" -eq 1 ]; then
+        tar -czf "$STAGING_DIR/${SOURCE_NAME}.tar.gz" LuaSF LuaGlue
+        mv "$STAGING_DIR/${SOURCE_NAME}.tar.gz" "$SOURCE_ARCHIVE"
     fi
-    tar -czf "$EMBEDDED_ARCHIVE" "$EMBEDDED_NAME"
+    if [ "$SOURCE_ONLY" -eq 0 ]; then
+        tar -czf "$EMBEDDED_ARCHIVE" "$EMBEDDED_NAME"
+    fi
 )
 
 rm -rf "$STAGING_DIR"
 
 echo
 echo "Done."
-if [ "$SFML_VARIANT" != "ME-OH" ]; then
+if [ "$SFML_VARIANT" != "ME-OH" ] || [ "$SOURCE_ONLY" -eq 1 ]; then
     echo "Source: $SOURCE_ARCHIVE"
 else
     echo "Source: use LuaSF-source-ME"
 fi
-echo "Embedded: $EMBEDDED_ARCHIVE"
+if [ "$SOURCE_ONLY" -eq 0 ]; then
+    echo "Embedded: $EMBEDDED_ARCHIVE"
+fi

@@ -79,32 +79,6 @@ if not exist "third_party\Lua\src\lua.h" (
     echo Using existing third_party\Lua.
 )
 
-if not exist "third_party\sol2\include\sol2\sol.hpp" (
-    echo Downloading sol2 headers...
-    mkdir "third_party\sol2\include\sol2" 2>nul
-    for %%f in (config.hpp forward.hpp sol.hpp) do (
-        powershell -Command "Invoke-WebRequest -Uri 'https://github.com/ThePhD/sol2/releases/download/v%SOL2_VERSION%/%%f' -OutFile 'third_party\sol2\include\sol2\%%f'"
-        if errorlevel 1 (
-            echo Failed to download sol2 %%f.
-            exit /b 1
-        )
-    )
-) else (
-    echo Using existing third_party\sol2.
-)
-
-echo Applying sol2 PR #1606 patch if needed...
-rem The published sol2 headers use CRLF line endings, so the patch has to
-rem ignore whitespace to match.
-git apply --ignore-whitespace --reverse --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch >nul 2>nul
-if not errorlevel 1 (
-    echo PR #1606 patch already applied to sol2.
-) else (
-    git apply --ignore-whitespace --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
-    if errorlevel 1 exit /b 1
-    git apply --ignore-whitespace --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
-    if errorlevel 1 exit /b 1
-)
 
 echo.
 echo SFML variant: %SFML_VARIANT% (%SFML_VARIANT_TAG%)

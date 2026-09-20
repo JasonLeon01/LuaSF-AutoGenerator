@@ -9,14 +9,14 @@ namespace lua_sf {
 
 class ClassSpriteTexture {
 protected:
-  sf::Texture texture;
+    sf::Texture texture;
 };
 
 class ClassSprite final : private ClassSpriteTexture, public sf::Sprite {
 public:
-  ClassSprite();
+    ClassSprite();
 };
 
-} // namespace lua_sf
+}  // namespace lua_sf
 
-void bind_ClassSupport(sol::state_view lua);
+void bind_ClassSupport(lua_glue::StateView lua);

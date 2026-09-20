@@ -59,24 +59,6 @@ if not exist "third_party\Lua\src\lua.h" (
     exit /b 1
 )
 
-if not exist "third_party\sol2\include\sol2\sol.hpp" (
-    echo Missing third_party\sol2. Run init.bat %SFML_VARIANT% first.
-    exit /b 1
-)
-
-echo Applying sol2 PR #1606 patch if needed...
-rem The published sol2 headers use CRLF line endings, so the patch has to
-rem ignore whitespace to match.
-git apply --ignore-whitespace --reverse --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch >nul 2>nul
-if not errorlevel 1 (
-    echo PR #1606 patch already applied to sol2.
-) else (
-    git apply --ignore-whitespace --check --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
-    if errorlevel 1 exit /b 1
-    git apply --ignore-whitespace --directory=third_party/sol2 -p1 cmake/sol/pr1606.patch
-    if errorlevel 1 exit /b 1
-)
-
 set "VARIANT_FILE=%~dp0.luasf-sfml-variant"
 set "PREVIOUS_VARIANT="
 if exist "%VARIANT_FILE%" set /p PREVIOUS_VARIANT=<"%VARIANT_FILE%"
@@ -89,8 +71,8 @@ echo Extracting SFML public API...
 "%PYTHON_EXE%" tools\extract_sfml_api.py --include-dir third_party/SFML/include
 if errorlevel 1 exit /b 1
 
-echo Generating sol2 bindings...
-"%PYTHON_EXE%" tools\generate_sol2_bindings.py
+echo Generating LuaGlue bindings...
+"%PYTHON_EXE%" tools\generate_glue_bindings.py
 if errorlevel 1 exit /b 1
 
 echo Generating standalone output CMake project...
@@ -105,13 +87,13 @@ if "%SFML_VARIANT%"=="" (
     >"%VARIANT_FILE%" echo %SFML_VARIANT%
 )
 
-set "CONFIGURE_ARGS=-DLUASF_SFML_ROOT=%~dp0third_party\SFML -DLUASF_LUA_ROOT=%~dp0third_party\Lua -DLUASF_SOL2_ROOT=%~dp0third_party\sol2"
+set "CONFIGURE_ARGS=-DLUASF_SFML_ROOT=%~dp0third_party\SFML -DLUASF_LUA_ROOT=%~dp0third_party\Lua"
 if not "%CONFIG_OVERRIDE%"=="" (
     set "CONFIGURE_ARGS=!CONFIGURE_ARGS! -DLUASF_DEFAULT_CONFIG=%CONFIG_OVERRIDE% -DCMAKE_BUILD_TYPE=%CONFIG_OVERRIDE%"
 )
 
 echo Configuring output CMake project...
-cmake -S output -B output\build %CONFIGURE_ARGS%
+cmake -S output\LuaSF -B output\build %CONFIGURE_ARGS%
 if errorlevel 1 exit /b 1
 
 set "BUILD_CONFIG="

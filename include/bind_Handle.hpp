@@ -4,4 +4,4 @@
 
 #include <cstdint>
 
-void bind_Handle(sol::state_view lua);
+void bind_Handle(lua_glue::StateView lua);

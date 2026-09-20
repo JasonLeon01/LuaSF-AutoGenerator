@@ -2,7 +2,7 @@
 Query and rendering API for LuaSF binding code generation.
 
 Imports pure data from ``binding_config`` and exposes functions that
-``generate_sol2_bindings.py`` and ``generate_build_files.py`` call.
+``generate_glue_bindings.py`` and ``generate_build_files.py`` call.
 
 Sections
 --------
@@ -31,6 +31,8 @@ try:
         CONVERSION_REGISTRY,
         CPP_BUILTIN_TYPES,
         INTEGER_TYPES,
+        INDEPENDENT_VALUE_TYPES,
+        MANUAL_INDEPENDENT_VALUE_HEADERS,
         LIFECYCLE_REGISTRY,
         LUA_NAMESPACE_PROJECTIONS,
         LifecycleCategory,
@@ -84,6 +86,8 @@ except ImportError:
         CONVERSION_REGISTRY,
         CPP_BUILTIN_TYPES,
         INTEGER_TYPES,
+        INDEPENDENT_VALUE_TYPES,
+        MANUAL_INDEPENDENT_VALUE_HEADERS,
         LIFECYCLE_REGISTRY,
         LUA_NAMESPACE_PROJECTIONS,
         LifecycleCategory,
@@ -228,6 +232,8 @@ try:
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
+        INDEPENDENT_VALUE_TYPES,
+        MANUAL_INDEPENDENT_VALUE_HEADERS,
         LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
         MANUAL_DEPENDENCIES,
@@ -272,6 +278,8 @@ except ImportError:
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
+        INDEPENDENT_VALUE_TYPES,
+        MANUAL_INDEPENDENT_VALUE_HEADERS,
         LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
         MANUAL_DEPENDENCIES,
@@ -731,7 +739,7 @@ def _indent(body: str, prefix: str = "    ") -> str:
     return prefix + body.replace("\n", "\n" + prefix)
 
 
-# -- public entry points called from generate_sol2_bindings.make_lambda --
+# -- public entry points called from generate_glue_bindings.make_lambda --
 
 
 def render_ll_memory_ctor(
@@ -788,7 +796,7 @@ def render_ll_stream_ctor(
     if stream_name is None:
         raise ValueError("long-lived stream constructor requires an sf::InputStream reference")
     body = render_template("ll_stream_ctor", stream_name=stream_name, owner_type=owner_type)
-    return f"[](sol::object {stream_name}) {{\n{_indent(body)}\n}}"
+    return f"[](lua_glue::Object {stream_name}) {{\n{_indent(body)}\n}}"
 
 
 def render_ll_stream_open(
@@ -801,7 +809,7 @@ def render_ll_stream_open(
     if stream_name is None:
         raise ValueError("long-lived stream open requires an sf::InputStream reference")
     body = render_template("ll_stream_open", stream_name=stream_name, call_target=call_target)
-    return f"[]({owner_type}& self, sol::object {stream_name}) -> bool {{\n{_indent(body)}\n}}"
+    return f"[]({owner_type}& self, lua_glue::Object {stream_name}) -> bool {{\n{_indent(body)}\n}}"
 
 
 def render_ll_reset(

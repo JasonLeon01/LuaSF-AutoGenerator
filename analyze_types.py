@@ -1,6 +1,6 @@
 import json
 
-with open("output/sfml_api.json", "r", encoding="utf-8") as f:
+with open("output/LuaSF/sfml_api.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 results = []

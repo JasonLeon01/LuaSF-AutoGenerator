@@ -145,6 +145,7 @@ jobs:
 
           $requiredRuntimeDlls = @(
               'LuaSF.dll',
+              'LuaGlue.dll',
               'lua.dll',
               'msvcp140.dll',
               'msvcp140_atomic_wait.dll',

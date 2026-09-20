@@ -12,6 +12,11 @@ from typing import Any
 
 from clang import cindex
 
+try:
+    from .output_files import write_text_if_changed
+except ImportError:
+    from output_files import write_text_if_changed
+
 
 DEFAULT_LIBCLANG = r"C:\Program Files\LLVM\bin\libclang.dll"
 DEFAULT_MODULES = ("Audio", "Graphics", "Network", "System", "Window")
@@ -567,7 +572,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract SFML public C++ API declarations to JSON.")
     parser.add_argument("--project-root", default=Path(__file__).resolve().parents[1])
     parser.add_argument("--include-dir", default="third_party/SFML/include")
-    parser.add_argument("--output", default="output/sfml_api.json")
+    parser.add_argument("--output", default="output/LuaSF/sfml_api.json")
     parser.add_argument("--libclang", default=default_libclang_path())
     parser.add_argument("--standard", default="c++20")
     parser.add_argument("--modules", default=",".join(DEFAULT_MODULES))
@@ -592,7 +597,7 @@ def main() -> int:
     api = build_api(args)
     output = (project_root / args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(api, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_if_changed(output, json.dumps(api, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {api['header_count']} headers to {output}")
     if api["diagnostics"]:
         print(f"Clang produced diagnostics for {len(api['diagnostics'])} headers.")
