@@ -17,14 +17,18 @@ endif()
 if(WIN32)
     set(LUASF_MODULE_FILE "${LUASF_RUNTIME_DIR}/LuaSF.dll")
     set(LUASF_LUA_FILE "${LUASF_RUNTIME_DIR}/lua.dll")
+    set(LUASF_GLUE_FILE "${LUASF_RUNTIME_DIR}/LuaGlue.dll")
+    set(LUASF_GLUE_IMPLIB "${LUASF_LIBRARY_DIR}/LuaGlue.lib")
     set(LUASF_MODULE_IMPLIB "${LUASF_LIBRARY_DIR}/LuaSF.lib")
     set(LUASF_LUA_IMPLIB "${LUASF_LIBRARY_DIR}/lua.lib")
 elseif(APPLE)
     set(LUASF_MODULE_FILE "${LUASF_RUNTIME_DIR}/LuaSF.dylib")
     set(LUASF_LUA_FILE "${LUASF_RUNTIME_DIR}/liblua.dylib")
+    set(LUASF_GLUE_FILE "${LUASF_RUNTIME_DIR}/libLuaGlue.dylib")
 else()
     set(LUASF_MODULE_FILE "${LUASF_RUNTIME_DIR}/LuaSF.so")
     set(LUASF_LUA_FILE "${LUASF_RUNTIME_DIR}/liblua.so")
+    set(LUASF_GLUE_FILE "${LUASF_RUNTIME_DIR}/libLuaGlue.so")
 endif()
 
 if(NOT EXISTS "${LUASF_MODULE_FILE}")
@@ -56,11 +60,26 @@ if(WIN32)
     )
 endif()
 
+if(NOT EXISTS "${LUASF_GLUE_FILE}")
+    message(FATAL_ERROR "LuaGlue runtime library was not found: ${LUASF_GLUE_FILE}")
+endif()
+if(NOT TARGET LuaGlue::LuaGlue)
+    add_library(LuaGlue::LuaGlue SHARED IMPORTED GLOBAL)
+    set_target_properties(LuaGlue::LuaGlue PROPERTIES
+        IMPORTED_LOCATION "${LUASF_GLUE_FILE}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LUASF_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES LuaSF::Lua
+        INTERFACE_COMPILE_FEATURES cxx_std_20)
+    if(WIN32)
+        set_target_properties(LuaGlue::LuaGlue PROPERTIES IMPORTED_IMPLIB "${LUASF_GLUE_IMPLIB}")
+    endif()
+endif()
+
 add_library(LuaSF::LuaSF SHARED IMPORTED GLOBAL)
 set_target_properties(LuaSF::LuaSF PROPERTIES
     IMPORTED_LOCATION "${LUASF_MODULE_FILE}"
     INTERFACE_INCLUDE_DIRECTORIES "${LUASF_INCLUDE_DIR}"
-    INTERFACE_LINK_LIBRARIES LuaSF::Lua
+    INTERFACE_LINK_LIBRARIES "LuaSF::Lua;LuaGlue::LuaGlue"
     INTERFACE_COMPILE_FEATURES cxx_std_20
 )
 if(WIN32)

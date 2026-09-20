@@ -2,11 +2,11 @@
 
 English | [简体中文](README_zh_CN.md)
 
-LuaSF AutoGenerator generates a CMake-based Lua module that exposes SFML to Lua through sol2. The generated module can be consumed either from source or from a collected binary package.
+LuaSF AutoGenerator generates a CMake-based Lua module that exposes SFML to Lua through LuaGlue. The generated module can be consumed either from source or from a collected binary package.
 
 The generated Lua module is named `LuaSF`. In CMake, consumers link against `LuaSF::LuaSF`.
 
-LuaSF is a binder only. It does not bundle Lua, sol2 or SFML, and it does not create or close the `lua_State`: the host owns the VM and hands it to LuaSF through `LuaSF_register`.
+LuaSF is a binder only. It ships the independent LuaGlue runtime. Lua and SFML are supplied by the host, which also owns the `lua_State`: the host hands the VM to LuaSF through `LuaSF_register`.
 
 ## Requirements
 
@@ -50,7 +50,7 @@ build.bat Release ME
 sh build.sh Release ME
 ```
 
-This creates the generated source project under `output/` and builds the embedded LuaSF dynamic library, the host `luac`, and the Lua language-server stub.
+This creates the generated source project under `output/LuaSF/`, alongside `output/LuaGlue/`, and builds the embedded LuaSF dynamic library, the host `luac`, and the Lua language-server stub.
 
 Switching variants replaces `third_party/SFML`; `init` and `build` both verify that the checked-out SFML matches the requested variant before doing any work.
 
@@ -78,6 +78,8 @@ pack_result.bat
 sh pack_result.sh
 ```
 
+To package generated sources without collecting binaries, run `sh pack_result.sh --source-only` or `pack_result.bat --source-only`. This preserves other archives in `output/packages/`; for an `ME-OH` workspace it creates `LuaSF-source-ME`, since both variants share the binding API. The source archive contains only the `LuaSF/` and `LuaGlue/` projects.
+
 Archives are written to `output/packages/`:
 
 | Variant | Source archive | Embedded archive |
@@ -88,16 +90,18 @@ Archives are written to `output/packages/`:
 
 `pack_result.sh` creates `.tar.gz` archives. `pack_result.bat` creates `.zip` archives.
 
-ME and ME-OH share the same binding interfaces, so ME-OH builds only produce an embedded archive. The ME source archive supports both variants; source archives do not include SFML.
+ME and ME-OH share the same binding interfaces, so default ME-OH packaging produces only an embedded archive. The ME source archive supports both variants; source archives do not include SFML.
 
-CI runs only when a `v*` tag is pushed. After all builds and package checks pass, it creates a draft Release with ten assets: four source archives and six embedded archives. Ordinary branch pushes do not run CI, and the workflow does not publish the draft or overwrite an existing Release.
+To build without pushing a tag, open **Actions → Build packages → Run workflow** on GitHub and select the branch to build. This runs the Windows VS2022 x64 and macOS arm64 matrices for the default, ME, and ME-OH variants, checks the packages, and uploads downloadable Actions artifacts. It does not create a Release. GitHub requires the manually runnable workflow to be present on the default branch before this entry is available.
+
+Pushing a `v*` tag runs the release workflow. After all builds and package checks pass, it creates a draft Release with ten assets: four source archives and six embedded archives. Ordinary branch pushes do not run CI, and the workflow does not publish the draft or overwrite an existing Release.
 
 ## Use From A CMake Project
 
 There are two supported integration styles:
 
 - **Packaged integration**: copy `output/result/embedded/` into your project, for example as `LuaSF/`.
-- **Source integration**: copy or vendor the generated `output/` source project into your project, for example as `LuaSF/`.
+- **Source integration**: copy or vendor the generated `output/LuaSF/` and `output/LuaGlue/` source projects into your project as sibling directories.
 
 The CMake integration target for embedded use is `LuaSF::LuaSF`.
 
@@ -129,12 +133,11 @@ luasf_copy_runtime_dlls(SFLua)
 
 ### Source Integration
 
-Use this when you have copied or vendored the generated `output/` source project into your project.
+Use this when you have copied or vendored the generated `output/LuaSF/` and `output/LuaGlue/` source projects as siblings into your project.
 
-The source project has no vendored dependencies. Point it at your own Lua, sol2 and SFML checkouts through the `LUASF_LUA_ROOT`, `LUASF_SOL2_ROOT` and `LUASF_SFML_ROOT` cache variables; all three are required:
+The source archive extracts directly to `LuaSF/` and `LuaGlue/`. LuaSF reuses an existing `LuaGlue::LuaGlue` target or adds the sibling project; `LUASF_GLUE_ROOT` can override that path. Set the required `LUASF_LUA_ROOT` and `LUASF_SFML_ROOT` cache variables to your Lua and SFML checkouts:
 
 - `LUASF_LUA_ROOT` — Lua source directory containing `src/lua.h`.
-- `LUASF_SOL2_ROOT` — sol2 source directory containing `include/sol2/sol.hpp`. LuaSF needs the `sol2` `optional::emplace` fix from `cmake/sol/pr1606.patch`, which the LuaSF repository applies to its own checkout; apply it to yours as well, or your build will not compile.
 - `LUASF_SFML_ROOT` — SFML source project. When your project already provides the `sfml-*` targets, LuaSF reuses them instead of adding the directory again.
 
 ```cmake
@@ -144,7 +147,6 @@ project(SFLua LANGUAGES C CXX)
 
 set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/stub/LuaSF.d.lua")
 set(LUASF_LUA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Lua")
-set(LUASF_SOL2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sol2")
 set(LUASF_SFML_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SFML")
 
 add_subdirectory(LuaSF)
@@ -326,11 +328,15 @@ LuaSF uses the `LUA_RIDX_MAINTHREAD` value as the identity for every registered 
 
 The host must serialize every Lua entry point—including `lua_pcall`, `luaL_dofile`, and equivalent APIs—with native callbacks. Wrap each entry with a successful `LuaSF_enter_state` and a matching `LuaSF_leave_state`, or install execution hooks and use that same re-entrant/recursive VM lock consistently for host execution. The effect path intentionally uses only the non-blocking try-enter hook. An effect callback must never invoke a producer-waiting lifecycle operation on its own source, because that operation would wait for the current callback itself.
 
+A C++ host may opt in to cheaper nested value access with `lua_glue::SetStateOwnsExecutionHook` after installing its execution hooks. The ownership probe must report whether the current thread actually holds the VM lock; it must not block, allocate, call Lua, re-enter LuaGlue, or change state. Internal value operations reuse an enclosing scope only while this probe confirms ownership and the hook generation is unchanged. Public `ExecutionScope`, `TryExecutionScope`, and enter/leave APIs retain their own entries. Replacing execution hooks clears the ownership probe; reinstall it when appropriate.
+
 Before closing a state, stop callback producers and detach or destroy their processors/factories while the state is still valid, then always perform `LuaSF_quiesce_state` → `LuaSF_shutdown_state` → `lua_close`. Quiesce/shutdown is not a substitute for stopping producer threads, and no callback may access the state after shutdown.
 
 ## Runtime Notes
 
-LuaSF is built as a dynamic library. At runtime, the executable must be able to load LuaSF itself, the Lua runtime, and the SFML runtime libraries. Use `luasf_copy_runtime_dlls(target)` or `luasf_copy_runtime_files(target)` to copy the required runtime libraries next to your executable.
+LuaSF is built as a dynamic library. At runtime, the executable must be able to load LuaSF itself, the LuaGlue and Lua runtimes, and the SFML runtime libraries. Use `luasf_copy_runtime_dlls(target)` or `luasf_copy_runtime_files(target)` to copy the required runtime libraries next to your executable.
+
+LuaGlue is a C++20 CMake project that depends only on Lua 5.5 and supports disabled RTTI. It exports `LuaGlue::LuaGlue`; supply `LUAGLUE_LUA_TARGET` to reuse the host Lua target, or let standalone configuration find Lua. Desktop builds share one runtime; mobile builds link it statically. Bindings use `.new(...)`, live instance and static properties, explicit callable signatures, trailing defaults evaluated per call, and per-source `constexpr` docstring arrays. Independently owned value types additionally expose `copy()` and `deepcopy()`; resource types do not gain automatic deep copying.
 
 ## License
 
@@ -346,6 +352,5 @@ LuaSF does not ship these dependencies; the version table records which variants
 | [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `310ME-iOSJoystick` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
 | [SFML-ME-OH](https://github.com/JasonLeon01/SFML-ME) | `310-ME-OH-GLESVER` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
-| [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
 
 SFML may also redistribute external libraries under their own licenses; see the SFML documentation and `third_party/SFML/license.md` for details.

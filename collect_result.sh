@@ -52,8 +52,8 @@ if [ ! -d "$EMBEDDED_LIB_DIR" ]; then
 fi
 
 STUB_FILE="$BUILD_DIR/LuaSF.d.lua"
-CALLBACK_CODECS_FILE="$OUTPUT_DIR/callback_codecs.json"
-SFML_API_FILE="$OUTPUT_DIR/sfml_api.json"
+CALLBACK_CODECS_FILE="$OUTPUT_DIR/LuaSF/callback_codecs.json"
+SFML_API_FILE="$OUTPUT_DIR/LuaSF/sfml_api.json"
 LUAC_FILE=$(find "$BUILD_DIR/tools" -maxdepth 2 \( -type f -o -type l \) \( -name 'luac' -o -name 'luac.exe' \) 2>/dev/null | head -n 1 || true)
 
 EMBEDDED_MODULE_FILE=$(
@@ -112,17 +112,6 @@ copy_runtime_files() {
         -exec cp -L {} "$dst"/ \;
 }
 
-write_lua_compat_header() {
-    header=$1
-    cat > "$EMBEDDED_RESULT_DIR/include/$header" << EOF
-#include "lua/$header"
-#undef LUA_VERSION_NUM
-#define LUA_VERSION_NUM 504
-#undef lua_newstate
-#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
-EOF
-}
-
 echo "Collecting LuaSF build result..."
 echo "Config: $CONFIG"
 echo "Source: $BUILD_DIR"
@@ -157,26 +146,22 @@ cp "$CALLBACK_CODECS_FILE" "$EMBEDDED_RESULT_DIR/callback_codecs.json"
 cp "$SFML_API_FILE" "$EMBEDDED_RESULT_DIR/sfml_api.json"
 cp "$LUAC_FILE" "$EMBEDDED_RESULT_DIR/tools/"
 
-copy_tree_contents "$OUTPUT_DIR/include" "$EMBEDDED_RESULT_DIR/include"
-copy_tree_contents "$BUILD_DIR/generated_include/sol" "$EMBEDDED_RESULT_DIR/include/sol"
+copy_tree_contents "$OUTPUT_DIR/LuaSF/include" "$EMBEDDED_RESULT_DIR/include"
+copy_tree_contents "$OUTPUT_DIR/LuaGlue/include" "$EMBEDDED_RESULT_DIR/include"
 copy_tree_contents "$DEPENDENCY_DIR/SFML/include" "$EMBEDDED_RESULT_DIR/include"
-copy_tree_contents "$DEPENDENCY_DIR/sol2/include" "$EMBEDDED_RESULT_DIR/include"
 
 if [ -d "$DEPENDENCY_DIR/Lua/src" ]; then
-    mkdir -p "$EMBEDDED_RESULT_DIR/include/lua"
-    cp "$DEPENDENCY_DIR"/Lua/src/*.h "$EMBEDDED_RESULT_DIR/include/lua/"
+    mkdir -p "$EMBEDDED_RESULT_DIR/include"
+    cp "$DEPENDENCY_DIR"/Lua/src/*.h "$EMBEDDED_RESULT_DIR/include/"
     for header in "$DEPENDENCY_DIR"/Lua/src/*.hpp; do
         [ -e "$header" ] || continue
-        cp "$header" "$EMBEDDED_RESULT_DIR/include/lua/"
+        cp "$header" "$EMBEDDED_RESULT_DIR/include/"
     done
-    write_lua_compat_header lua.h
-    write_lua_compat_header lauxlib.h
-    write_lua_compat_header lualib.h
 fi
 
 if [ -d "$EMBEDDED_LIB_DIR" ] || [ -d "$LIB_DIR" ] || [ -d "$SFML_LIB_DIR" ]; then
     mkdir -p "$EMBEDDED_RESULT_DIR/lib"
-    for source_dir in "$EMBEDDED_LIB_DIR" "$LIB_DIR" "$SFML_LIB_DIR"; do
+    for source_dir in "$EMBEDDED_LIB_DIR" "$LIB_DIR" "$SFML_LIB_DIR" "$BUILD_DIR/LuaGlue" "$BUILD_DIR/LuaGlue/$CONFIG"; do
         [ -d "$source_dir" ] || continue
         find "$source_dir" -maxdepth 1 \( -type f -o -type l \) \
             \( -name '*.lib' -o -name '*.exp' -o -name '*.a' \) \
@@ -210,12 +195,10 @@ cp "cmake/result_README.md" "$EMBEDDED_RESULT_DIR/README.md"
     ls -1 "$EMBEDDED_RESULT_DIR/tools"
     echo
     echo "include:"
-    echo "- LuaSF generated headers from output/include"
+    echo "- LuaSF generated headers from output/LuaSF/include"
     echo "- SFML public headers"
-    echo "- sol2 public headers"
-    echo "- Lua headers under include/lua"
-    echo "- CMake generated sol compatibility headers under include/sol"
-    echo "- Lua compatibility wrappers at include/lua.h, include/lauxlib.h, include/lualib.h"
+    echo "- LuaGlue public headers"
+    echo "- Native Lua 5.5 headers under include"
     if [ -d "$EMBEDDED_RESULT_DIR/lib" ]; then
         echo
         echo "lib:"

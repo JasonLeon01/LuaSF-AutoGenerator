@@ -4,4 +4,4 @@
 
 #include <SFML/Window/Event.hpp>
 
-void bind_Event(sol::state_view lua);
+void bind_Event(lua_glue::StateView lua);

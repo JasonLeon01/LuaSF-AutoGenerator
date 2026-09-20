@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .output_files import write_text_if_changed
     from .replace_model import (
         BINDING_TEMPLATES,
         BYTE_TYPES,
@@ -23,6 +24,8 @@ try:
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
+        INDEPENDENT_VALUE_TYPES,
+        MANUAL_INDEPENDENT_VALUE_HEADERS,
         LifecycleCategory,
         LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
@@ -63,6 +66,7 @@ try:
         walk_declarations,
     )
 except ImportError:
+    from output_files import write_text_if_changed
     from replace_model import (
         BINDING_TEMPLATES,
         BYTE_TYPES,
@@ -77,6 +81,8 @@ except ImportError:
         IGNORE_RETURN_TYPES,
         IGNORED_NAMESPACES,
         INTEGER_TYPES,
+        INDEPENDENT_VALUE_TYPES,
+        MANUAL_INDEPENDENT_VALUE_HEADERS,
         LifecycleCategory,
         LUA_NAMESPACE_PROJECTIONS,
         LUA_KEYWORDS,
@@ -538,7 +544,7 @@ def generic_callback_value_issue(cpp_type: str, *, is_return: bool, path: str) -
 
     if base == "void":
         return None if is_return else f"{path} cannot have type void"
-    if callback_value_lua_type(base) == "any" and base not in {"sol::object", "sol::table"}:
+    if callback_value_lua_type(base) == "any" and base not in {"lua_glue::Object", "lua_glue::Table"}:
         return f"{path} has no ordinary Lua conversion ({value})"
     return None
 
@@ -1024,13 +1030,13 @@ def lua_param_type(type_ref: TypeRef) -> str:
     if base in INTEGER_TYPES:
         return f"lua_sf::LuaIntegral<{base}>"
     if is_std_function(type_ref):
-        return "sol::object"
+        return "lua_glue::Object"
     if is_sf_string(cpp) or is_filesystem_path(cpp) or is_string_view(cpp) or is_std_string(cpp) or is_std_wstring(cpp):
         return "std::string"
     if vector_element(cpp):
-        return "sol::table"
+        return "lua_glue::Table"
     if optional_element(cpp):
-        return "sol::object"
+        return "lua_glue::Object"
     return cpp
 
 
@@ -1098,9 +1104,9 @@ def return_expr(type_ref: TypeRef, expr: str, indent: str, function_name: str | 
         return [
             f"{indent}const auto* result = {expr};",
             f"{indent}if (!result)",
-            f"{indent}    return sol::as_table(std::vector<{elem}>{{}});",
+            f"{indent}    return lua_glue::AsTable(std::vector<{elem}>{{}});",
             f"{indent}std::vector<{elem}> result_values(result, result + static_cast<std::size_t>({count_expr}));",
-            f"{indent}return sol::as_table(std::move(result_values));",
+            f"{indent}return lua_glue::AsTable(std::move(result_values));",
         ]
     if is_window_handle(type_ref):
         return [f"{indent}return lua_sf::WindowHandle::fromNative({expr});"]
@@ -1236,7 +1242,7 @@ def lua_path_for_type(qualified_name: str) -> str:
 
 def lua_table_expression(qualified_name: str) -> str:
     path = lua_path_for_type(qualified_name)
-    return "lua" + "".join(f"[{cpp_string_literal(part)}]" for part in path.split(".")) + ".get<sol::table>()"
+    return "lua" + "".join(f"[{cpp_string_literal(part)}]" for part in path.split(".")) + ".get<lua_glue::Table>()"
 
 
 def lua_leaf_for_type(qualified_name: str) -> str:
@@ -1269,9 +1275,9 @@ def cpp_type_to_lua_type(value: str) -> str:
         return "number"
     if base in STRING_TYPES or base == "sf::String":
         return "string"
-    if base in {"sol::object", "sol::variadic_args"}:
+    if base in {"lua_glue::Object", "lua_glue::Arguments"}:
         return "any"
-    if base == "sol::table":
+    if base == "lua_glue::Table":
         return "table"
     if base in {"lua_State*", "lua_State"}:
         return "any"
@@ -1339,6 +1345,8 @@ def stub_signature_for_item(
         override = plan.stub_param_types.get(stub_param.name)
         if override:
             stub_param = StubParam(stub_param.name, override)
+        if any(sanitize_lua_identifier(p.get("name") or "") == stub_param.name and p.get("default") is not None for p in params):
+            stub_param = StubParam(stub_param.name + "?", stub_param.lua_type)
         stub_params_list.append(stub_param)
     stub_params = tuple(stub_params_list)
     if constructor_return:
@@ -1408,7 +1416,7 @@ def stub_doc_lines(item: dict[str, Any] | None) -> list[str]:
     doc = item.get("doc")
     if not isinstance(doc, str) or not doc.strip():
         return []
-    return [f"    LUASF_STUB_DOC({cpp_string_literal(doc)});"]
+    return [f"    LUASF_STUB_DOC({docstring_ref(doc)});"]
 
 
 def first_stub_doc(items: list[str | None]) -> str | None:
@@ -1468,18 +1476,7 @@ def direct_children(item: dict[str, Any], kind: str) -> list[dict[str, Any]]:
 
 
 def constructor_param_sets(params: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    if not params:
-        return [[]]
-    first_default = None
-    for index, param in enumerate(params):
-        if param.get("default") is not None:
-            first_default = index
-            break
-    if first_default is None:
-        return [params]
-    if any(param.get("default") is None for param in params[first_default:]):
-        return [params]
-    return [params[:count] for count in range(first_default, len(params) + 1)]
+    return [params]
 
 
 def planned_lua_param_type(lua_param: str) -> str:
@@ -1489,8 +1486,8 @@ def planned_lua_param_type(lua_param: str) -> str:
 
 def overload_specificity_key(plan: PlannedCall, original_index: int) -> tuple[int, int, int, int]:
     param_types = [planned_lua_param_type(param) for param in plan.lua_params]
-    object_params = sum(1 for type_text in param_types if type_text in {"sol::object", "sol::variadic_args"})
-    table_params = sum(1 for type_text in param_types if type_text == "sol::table")
+    object_params = sum(1 for type_text in param_types if type_text in {"lua_glue::Object", "lua_glue::Arguments"})
+    table_params = sum(1 for type_text in param_types if type_text == "lua_glue::Table")
     return (object_params, table_params, -len(param_types), original_index)
 
 
@@ -1553,7 +1550,7 @@ def plan_parameters(
             has_size_pair = next_param is not None and is_size_type(TypeRef.from_json(next_param.get("type")))
             is_const_pointer = is_const_type(cpp)
             if is_const_pointer:
-                plan.lua_params.append(f"sol::object {name}")
+                plan.lua_params.append(f"lua_glue::Object {name}")
                 plan.prelude.append(f"auto {name}_buffer = lua_sf::array_from_object<{element}>({name});")
                 plan.call_args.append(f"{name}_buffer.data()")
                 plan.signature_key += (f"inarray:{element}",)
@@ -1569,7 +1566,7 @@ def plan_parameters(
             plan.lua_params.append(f"std::size_t {lua_size_name}")
             plan.prelude.append(f"std::vector<{element}> {name}_buffer({lua_size_name});")
             plan.call_args.append(f"{name}_buffer.data()")
-            plan.post_values.append(f"sol::as_table({name}_buffer)")
+            plan.post_values.append(f"lua_glue::AsTable({name}_buffer)")
             plan.output_arrays.append(OutputArray(index, f"{name}_buffer"))
             plan.signature_key += (f"outarray:{element}",)
             if has_size_pair:
@@ -1617,7 +1614,7 @@ def plan_parameters(
     return plan
 
 
-def make_lambda(
+def _make_lambda(
     item: dict[str, Any],
     owner_type: str | None,
     call_name: str,
@@ -1641,7 +1638,8 @@ def make_lambda(
 
     lua_args = ", ".join(plan.lua_params)
     if owner_type and not item.get("static", False) and not is_constructor:
-        lua_args = f"{owner_type}& self" + (f", {lua_args}" if lua_args else "")
+        self_type = f"const {owner_type}" if item.get("const") else owner_type
+        lua_args = f"{self_type}& self" + (f", {lua_args}" if lua_args else "")
 
     capture = "[lua]" if return_wrapper_uses_lua(return_type) else "[]"
     lines: list[str] = []
@@ -1683,7 +1681,8 @@ def make_lambda(
     if item.get("static", False) and call_owner:
         call_target = f"{call_owner}::{call_name}"
     elif dispatch_type:
-        call_target = f"static_cast<{dispatch_type}&>(self).{call_name}"
+        dispatch_qualifier = "const " if item.get("const") else ""
+        call_target = f"static_cast<{dispatch_qualifier}{dispatch_type}&>(self).{call_name}"
     else:
         call_target = f"self.{call_name}"
     if owner_type is None:
@@ -1760,7 +1759,7 @@ def make_lambda(
     elif item.get("qualified_name") in SPECIAL_POINTER_RETURNS:
         trailing_return = ""
     elif vector_element(return_type.cpp):
-        trailing_return = " -> sol::object"
+        trailing_return = " -> lua_glue::Object"
     elif return_type.cpp and return_type.cpp != "void" and not plan.post_values and not return_needs_wrapper(return_type):
         trailing_return = f" -> {return_type.cpp}"
     elif is_window_handle(return_type):
@@ -1775,7 +1774,7 @@ def make_lambda(
     ):
         trailing_return = " -> std::string"
     elif optional_element(return_type.cpp):
-        trailing_return = " -> sol::object"
+        trailing_return = " -> lua_glue::Object"
     else:
         trailing_return = ""
 
@@ -1800,6 +1799,46 @@ def make_lambda(
     return "\n".join(lines), None
 
 
+_DOCSTRINGS: list[str] = []
+
+
+def docstring_ref(doc: str | None) -> str:
+    doc = doc or ""
+    if doc not in _DOCSTRINGS:
+        _DOCSTRINGS.append(doc)
+    return f"docs[{_DOCSTRINGS.index(doc)}]"
+
+
+def make_lambda(item, owner_type, call_name, is_constructor=False, value_constructor=False):
+    code, reason = _make_lambda(item, owner_type, call_name, is_constructor, value_constructor)
+    if code is None:
+        return code, reason
+    defaults = []
+    for parameter in item.get("parameters", []):
+        expression = parameter.get("default")
+        if expression is None:
+            continue
+        type_ref = TypeRef.from_json(parameter.get("type"))
+        native_type = clean_cpp_type((type_ref.canonical_cpp or type_ref.cpp).rstrip("&").strip())
+        if not native_type.endswith("*"):
+            native_type = re.sub(r"^(?:(?:const|volatile)\s+)+", "", native_type)
+        default_type = optional_element(native_type) or native_type
+        leaf = default_type.rsplit("::", 1)[-1]
+        if re.match(r"^[A-Za-z_]\w*::", expression) and expression.startswith(leaf + "::"):
+            expression = default_type + expression[len(leaf):]
+        elif re.fullmatch(r"[A-Za-z_]\w*", expression) and expression not in {"true", "false", "nullptr"}:
+            scope = (item.get("qualified_name") or call_name).rsplit("::", 1)[0]
+            expression = scope + "::" + expression
+        value = native_type + expression if expression.lstrip().startswith("{") else f"static_cast<{native_type}>({expression})"
+        default_ref = TypeRef(spelling=native_type, canonical=native_type)
+        body = return_expr(default_ref, value, "    ")
+        defaults.append("lua_glue::DefaultFactory{[lua]() {\n    using namespace sf;\n" + "\n".join(body) + "\n}}")
+    if defaults:
+        code += ",\nlua_glue::Defaults{" + ",\n".join(defaults) + "}"
+    code += ",\n" + docstring_ref(item.get("doc"))
+    return code, reason
+
+
 def overload_block(
     name: str,
     lambdas: list[str],
@@ -1807,37 +1846,15 @@ def overload_block(
     target: str = "set_function",
     self_dependency: bool = False,
 ) -> list[str]:
-    if not lambdas:
-        return []
-    if len(lambdas) == 1:
-        lines = [f'{indent}{target}("{name}",']
+    lines: list[str] = []
+    table = target.removesuffix(".set_function")
+    for callable_code in lambdas:
+        lines.append(f'{indent}lua_glue::BindCallable({table}, "{name}",')
+        append_indented_block(lines, callable_code, indent + "    ",
+                              "," if self_dependency else "")
         if self_dependency:
-            lines.append(f"{indent}    sol::policies(")
-            append_indented_block(lines, lambdas[0], indent + "        ", ",")
-            lines.append(f"{indent}        sol::self_dependency{{}}")
-            lines.append(f"{indent}    )")
-        else:
-            append_indented_block(lines, lambdas[0], indent + "    ")
+            lines.append(f"{indent}    lua_glue::ReturnPolicy::ReferenceInternal")
         lines.append(f"{indent});")
-        return lines
-    lines = [f'{indent}{target}("{name}",']
-    if self_dependency:
-        lines.append(f"{indent}    sol::policies(")
-        lines.append(f"{indent}        sol::overload(")
-        lambda_indent = indent + "            "
-    else:
-        lines.append(f"{indent}    sol::overload(")
-        lambda_indent = indent + "        "
-    for index, lambda_code in enumerate(lambdas):
-        suffix = "," if index + 1 < len(lambdas) else ""
-        append_indented_block(lines, lambda_code, lambda_indent, suffix)
-    if self_dependency:
-        lines.append(f"{indent}        ),")
-        lines.append(f"{indent}        sol::self_dependency{{}}")
-        lines.append(f"{indent}    )")
-    else:
-        lines.append(f"{indent}    )")
-    lines.append(f"{indent});")
     return lines
 
 
@@ -1886,30 +1903,23 @@ def meta_assignment_block(
     indent: str = "    ",
     self_dependency: bool = False,
 ) -> list[str]:
-    if not lambdas:
-        return []
-    lines = [f"{indent}{var_name}[sol::meta_function::{meta_function}] ="]
-    value_indent = indent + "    "
-    if self_dependency:
-        lines.append(f"{value_indent}sol::policies(")
-        value_indent += "    "
-    if len(lambdas) == 1:
-        append_indented_block(
-            lines,
-            lambdas[0],
-            value_indent,
-            "," if self_dependency else "",
-        )
-    else:
-        lines.append(f"{value_indent}sol::overload(")
-        for index, lambda_code in enumerate(lambdas):
-            suffix = "," if index + 1 < len(lambdas) else ""
-            append_indented_block(lines, lambda_code, value_indent + "    ", suffix)
-        lines.append(f"{value_indent})" + ("," if self_dependency else ""))
-    if self_dependency:
-        lines.append(f"{value_indent}sol::self_dependency{{}}")
-        lines.append(f"{indent}    )")
-    lines.append(f"{indent};")
+    meta_name = {
+        "to_string": "__tostring", "unary_minus": "__unm", "addition": "__add",
+        "subtraction": "__sub", "multiplication": "__mul", "division": "__div",
+        "equal_to": "__eq", "less_than": "__lt", "less_than_or_equal_to": "__le",
+        "bitwise_left_shift": "__shl", "bitwise_right_shift": "__shr",
+        "modulus": "__mod", "bitwise_and": "__band", "bitwise_or": "__bor",
+        "bitwise_xor": "__bxor", "bitwise_not": "__bnot",
+        "index": "__index", "new_index": "__newindex", "call": "__call",
+    }[meta_function]
+    lines: list[str] = []
+    for callable_code in lambdas:
+        lines.append(f'{indent}lua_glue::BindMetamethod({var_name}, "{meta_name}",')
+        append_indented_block(lines, callable_code, indent + "    ",
+                              "," if self_dependency else "")
+        if self_dependency:
+            lines.append(f"{indent}    lua_glue::ReturnPolicy::ReferenceInternal")
+        lines.append(f"{indent});")
     return lines
 
 
@@ -1925,7 +1935,7 @@ def is_single_output_reference_operator(method: dict[str, Any]) -> bool:
     return is_output_reference(type_ref.cpp)
 
 
-class Sol2Generator:
+class GlueGenerator:
     def __init__(self, api: dict[str, Any], output_root: Path):
         self.api = api
         self.output_root = output_root
@@ -2242,9 +2252,19 @@ class Sol2Generator:
         self.src_root.mkdir(parents=True, exist_ok=True)
         self._remove_legacy_generated_utils()
         self._clean_previous_bindings()
+        self._value_type_headers = dict(MANUAL_INDEPENDENT_VALUE_HEADERS)
 
         for file_item in self.api.get("files", []):
             self._write_binding_file(file_item)
+
+        self._write_value_traits()
+
+    def _write_value_traits(self) -> None:
+        lines = ["#pragma once", "", "#include <LuaGlue/LuaGlue.hpp>"]
+        lines.extend(f"#include <{header}>" for header in sorted(set(self._value_type_headers.values())))
+        lines.append("")
+        lines.extend(f"template <> struct lua_glue::StructTraits<{name}> : lua_glue::IndependentValue<{name}> {{}};" for name in sorted(self._value_type_headers))
+        write_text_if_changed(self.include_root / "LuaSFValueTraits.hpp", "\n".join(lines) + "\n", encoding="utf-8")
 
     def _remove_legacy_generated_utils(self) -> None:
         for path in (self.include_root / "sfml_lua_utils.hpp", self.src_root / "sfml_lua_utils.cpp"):
@@ -2253,10 +2273,13 @@ class Sol2Generator:
 
     def _clean_previous_bindings(self) -> None:
         for root, suffix in ((self.include_root, ".hpp"), (self.src_root, ".cpp")):
-            if not root.exists():
-                continue
+            expected = {
+                root / item["module"] / f"bind_{Path(item['path']).stem}{suffix}"
+                for item in self.api.get("files", [])
+            }
             for path in root.rglob(f"bind_*{suffix}"):
-                path.unlink()
+                if path.parent != root and path not in expected:
+                    path.unlink()
 
     def _write_binding_file(self, file_item: dict[str, Any]) -> None:
         sfml_path = Path(file_item["path"])
@@ -2272,7 +2295,7 @@ class Sol2Generator:
         original_include = sfml_include_for_file(file_item)
         extra_includes = self._extra_includes_for_file(file_item, original_include)
 
-        hpp_path.write_text(
+        write_text_if_changed(hpp_path,
             "\n".join(
                 [
                     "#pragma once",
@@ -2280,19 +2303,26 @@ class Sol2Generator:
                     f'#include <{original_include}>',
                     *[f"#include <{include}>" for include in extra_includes],
                     '#include "utils.hpp"',
+                    '#include "LuaSFValueTraits.hpp"',
                     "",
-                    f"void bind_{stem}(sol::state_view lua);",
+                    f"void bind_{stem}(lua_glue::StateView lua);",
                     "",
                 ]
             ),
             encoding="utf-8",
         )
 
+        _DOCSTRINGS.clear()
+        self._value_types_in_file = []
         body_lines = self._emit_file_body(file_item, stem)
+        for value_type in self._value_types_in_file:
+            self._value_type_headers[value_type] = original_include
         cpp_lines = [
             f'#include "{module}/bind_{stem}.hpp"',
             "",
             "#include <algorithm>",
+            "#include <array>",
+            "#include <string_view>",
             "#include <memory>",
             "#include <sstream>",
             "#include <stdexcept>",
@@ -2301,13 +2331,17 @@ class Sol2Generator:
             "#include <utility>",
             "#include <vector>",
             "",
-            f"void bind_{stem}(sol::state_view lua) {{",
-            "    sol::table sf = lua_sf::sf_table(lua);",
+            f"namespace {{ constexpr std::array<std::string_view, {len(_DOCSTRINGS)}> docs = {{",
+            *[f"    {cpp_string_literal(doc)}," for doc in _DOCSTRINGS],
+            "}; }",
+            "",
+            f"void bind_{stem}(lua_glue::StateView lua) {{",
+            "    lua_glue::Table sf = lua_sf::sf_table(lua);",
             *body_lines,
             "}",
             "",
         ]
-        cpp_path.write_text("\n".join(cpp_lines), encoding="utf-8")
+        write_text_if_changed(cpp_path, "\n".join(cpp_lines), encoding="utf-8")
 
     def _extra_includes_for_file(self, file_item: dict[str, Any], original_include: str) -> list[str]:
         includes: set[str] = set()
@@ -2360,7 +2394,7 @@ class Sol2Generator:
             if full_namespace in LUA_NAMESPACE_PROJECTIONS:
                 return self._emit_children(item, table_var, f"{full_namespace}::")
             child_table = f"{table_var}_{sanitize_identifier(name)}"
-            lines = [f'    sol::table {child_table} = {table_var}["{name}"].get_or_create<sol::table>();']
+            lines = [f'    lua_glue::Table {child_table} = {table_var}["{name}"].get_or_create<lua_glue::Table>();']
             lines.extend(self._emit_children(item, child_table, f"{namespace_prefix}{name}::"))
             return lines
         if kind in {"CLASS_DECL", "STRUCT_DECL"}:
@@ -2408,11 +2442,11 @@ class Sol2Generator:
                 f"    LUASF_STUB_FIELD({cpp_string_literal(constant['name'])}, "
                 f"{cpp_string_literal(field_type)});"
             )
-        lines.append(f'    {table_var}.new_enum("{lua_name}",')
+        lines.append(f'    lua_glue::BindEnum<{full_name}>({table_var}, "{lua_name}", {{')
         for index, constant in enumerate(constants):
             suffix = "," if index + 1 < len(constants) else ""
-            lines.append(f'        "{constant["name"]}", {full_name}::{constant["name"]}{suffix}')
-        lines.append("    );")
+            lines.append(f'        {{"{constant["name"]}", {full_name}::{constant["name"]}}}{suffix}')
+        lines.append("    });")
         return lines
 
     def _emit_class(self, cls: dict[str, Any], table_var: str) -> list[str]:
@@ -2434,23 +2468,22 @@ class Sol2Generator:
         var_name = f"type_{sanitize_identifier(full_name)}"
         direct_bases = self._direct_base_type_names(cls, full_name)
         bases = self._base_type_names_for_binding(cls, full_name)
-        if bases:
-            lines = [
-                f'    auto {var_name} = {table_var}.new_usertype<{full_name}>("{lua_name}",',
-                "        sol::no_constructor,",
-                f"        sol::base_classes, sol::bases<{', '.join(bases)}>()",
-                "    );",
-            ]
-        else:
-            lines = [f'    auto {var_name} = {table_var}.new_usertype<{full_name}>("{lua_name}", sol::no_constructor);']
+        value_type = bool(cls.get("_value_type")) or full_name in INDEPENDENT_VALUE_TYPES
+        cls["_value_type"] = value_type
+        if value_type:
+            self._value_types_in_file.append(full_name)
+        binder = "BindStruct" if value_type else "BindClass"
+        lines = [f'    auto {var_name} = lua_glue::{binder}<{full_name}>({table_var}, "{lua_name}");']
+        for base in bases:
+            lines.append(f"    lua_glue::BindBase<{full_name}, {base}>({var_name});")
 
         nested_table_var = f"table_{sanitize_identifier(full_name)}"
-        lines.append(f'    sol::table {nested_table_var} = {table_var}["{lua_name}"].get<sol::table>();')
+        lines.append(f'    lua_glue::Table {nested_table_var} = {table_var}["{lua_name}"].get<lua_glue::Table>();')
         if not cls.get("_value_type"):
             lines.append(f"    lua_sf::mark_shared_usertype<{full_name}>(lua);")
         if direct_bases:
             native_bases_var = f"native_bases_{sanitize_identifier(full_name)}"
-            lines.append(f"    sol::table {native_bases_var} = lua.create_table();")
+            lines.append(f"    lua_glue::Table {native_bases_var} = lua.create_table();")
             for base in direct_bases:
                 lines.append(f"    {native_bases_var}.add({lua_table_expression(base)});")
             lines.append(f'    {nested_table_var}.raw_set("__nativeBases", {native_bases_var});')
@@ -2478,6 +2511,9 @@ class Sol2Generator:
                 lines.extend(self._emit_var(child, nested_table_var, f"{full_name}::"))
             elif child.get("kind") in {"TYPE_ALIAS_DECL", "TYPEDEF_DECL"}:
                 lines.extend(self._emit_type_alias(child, nested_table_var, full_name, lua_path))
+        if value_type:
+            for method in ("copy", "deepcopy"):
+                lines.append(f'    LUASF_STUB_FUNCTION("{lua_path}", "{method}", "fun(self: {lua_path}): {lua_path}");')
         return lines
 
     @staticmethod
@@ -2702,8 +2738,8 @@ class Sol2Generator:
                 )
             if name == "operator-" and shape == "unary":
                 lines.append(
-                    f"    {var_name}[sol::meta_function::unary_minus] = "
-                    f"[](const {full_name}& value) {{ return -value; }};"
+                    f'    lua_glue::BindMetamethod({var_name}, "__unm", '
+                    f"[](const {full_name}& value) {{ return -value; }});"
                 )
                 lines.append(f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, "unm: {lua_path}");')
             elif name in {"operator+", "operator-", "operator=="}:
@@ -2714,8 +2750,8 @@ class Sol2Generator:
                     "operator==": "equal_to",
                 }[name]
                 lines.append(
-                    f"    {var_name}[sol::meta_function::{meta}] = "
-                    f"[](const {full_name}& left, const {full_name}& right) {{ return left {symbol} right; }};"
+                    f'    lua_glue::BindMetamethod({var_name}, "{dict(addition="__add", subtraction="__sub", equal_to="__eq")[meta]}", '
+                    f"[](const {full_name}& left, const {full_name}& right) {{ return left {symbol} right; }});"
                 )
                 result_type = "boolean" if name == "operator==" else lua_path
                 annotation = "eq" if name == "operator==" else ("add" if name == "operator+" else "sub")
@@ -2724,23 +2760,18 @@ class Sol2Generator:
                     f'{cpp_string_literal(f"{annotation}({lua_path}): {result_type}")});'
                 )
             elif name == "operator*":
-                lines.append(f"    {var_name}[sol::meta_function::multiplication] = sol::overload(")
-                lines.append(
-                    f"        []({full_name} value, {scalar_param} scalar) {{ return value * {scalar_expr}; }},"
-                )
-                left_expr = scalar_expr.replace("scalar", "scalar")
-                lines.append(
-                    f"        []({scalar_param} scalar, {full_name} value) {{ return {left_expr} * value; }}"
-                )
-                lines.append("    );")
+                lines.extend(meta_assignment_block(var_name, "multiplication", [
+                    f"[]({full_name} value, {scalar_param} scalar) {{ return value * {scalar_expr}; }}",
+                    f"[]({scalar_param} scalar, {full_name} value) {{ return {scalar_expr} * value; }}",
+                ]))
                 lines.append(
                     f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, '
                     f'{cpp_string_literal(f"mul({scalar_lua}): {lua_path}")});'
                 )
             elif name == "operator/":
                 lines.append(
-                    f"    {var_name}[sol::meta_function::division] = "
-                    f"[]({full_name} value, {scalar_param} scalar) {{ return value / {scalar_expr}; }};"
+                    f'    lua_glue::BindMetamethod({var_name}, "__div", '
+                    f"[]({full_name} value, {scalar_param} scalar) {{ return value / {scalar_expr}; }});"
                 )
                 lines.append(
                     f'    LUASF_STUB_OPERATOR({cpp_string_literal(lua_path)}, '
@@ -2796,10 +2827,10 @@ class Sol2Generator:
             *stub_doc_lines(item),
             f'    LUASF_STUB_ALIAS({cpp_string_literal(alias_lua)}, {cpp_string_literal(target_lua)});',
             "    {",
-            f'        const sol::object aliasValue = {table_var}.raw_get<sol::object>("{name}");',
-            f'        const sol::object aliasTarget = {table_var}.raw_get<sol::object>("{target_leaf}");',
-            "        if ((!aliasValue.valid() || aliasValue.get_type() == sol::type::lua_nil) &&",
-            "            aliasTarget.valid() && aliasTarget.get_type() != sol::type::lua_nil)",
+            f'        const lua_glue::Object aliasValue = {table_var}.raw_get<lua_glue::Object>("{name}");',
+            f'        const lua_glue::Object aliasTarget = {table_var}.raw_get<lua_glue::Object>("{target_leaf}");',
+            "        if ((!aliasValue.valid() || aliasValue.get_type() == lua_glue::Type::Nil) &&",
+            "            aliasTarget.valid() && aliasTarget.get_type() != lua_glue::Type::Nil)",
             f'            {table_var}.raw_set("{name}", aliasTarget);',
             "    }",
         ]
@@ -2985,20 +3016,7 @@ class Sol2Generator:
 
         lambdas = [item[1] for item in overloads]
         lambdas.extend(lambda_code for lambda_code, _stub_type in configured_constructors)
-        if len(lambdas) == 1:
-            lines = stub_lines
-            lines.append(f'    {var_name}.set_function("new", sol::factories(')
-            append_indented_block(lines, lambdas[0], "        ")
-            lines.append("    ));")
-            return lines
-
-        lines = stub_lines
-        lines.append(f'    {var_name}.set_function("new", sol::factories(')
-        for index, lambda_code in enumerate(lambdas):
-            suffix = "," if index + 1 < len(lambdas) else ""
-            append_indented_block(lines, lambda_code, "        ", suffix)
-        lines.append("    ));")
-        return lines
+        return stub_lines + overload_block("new", lambdas, "    ", f"{var_name}.set_function")
 
     @staticmethod
     def _has_default_constructible_aggregate(cls: dict[str, Any]) -> bool:
@@ -3050,19 +3068,19 @@ class Sol2Generator:
                 if is_window_handle(type_ref):
                     getter_return = " -> lua_sf::WindowHandle"
                 elif optional_element(type_ref.cpp):
-                    getter_return = " -> sol::object"
+                    getter_return = " -> lua_glue::Object"
                 elif is_sf_string(type_ref.cpp) or is_filesystem_path(type_ref.cpp) or is_char_pointer(type_ref.cpp):
                     getter_return = " -> std::string"
                 else:
                     getter_return = ""
-                getter_lines = [f"{getter_capture}({full_name}& self){getter_return} {{"]
+                getter_lines = [f"{getter_capture}(const {full_name}& self){getter_return} {{"]
                 getter_lines.extend(return_expr(type_ref, f"self.{field_name}", "    "))
                 getter_lines.append("}")
                 getter = "\n".join(getter_lines)
                 if field_item.get("readonly"):
-                    lines.append(f'    {var_name}.set("{field_name}", sol::property(')
+                    lines.append(f'    lua_glue::BindProperty({var_name}, "{field_name}",')
                     append_indented_block(lines, getter, "        ")
-                    lines.append("    ));")
+                    lines.append("    );")
                 else:
                     setter_type = lua_param_type(type_ref)
                     prelude, expr = from_lua_expr(type_ref, "value")
@@ -3071,14 +3089,13 @@ class Sol2Generator:
                     setter_lines.append(f"    self.{field_name} = {expr};")
                     setter_lines.append("}")
                     setter = "\n".join(setter_lines)
-                    lines.append(f'    {var_name}.set("{field_name}", sol::property(')
+                    lines.append(f'    lua_glue::BindProperty({var_name}, "{field_name}",')
                     append_indented_block(lines, getter, "        ", ",")
                     append_indented_block(lines, setter, "        ")
-                    lines.append("    ));")
+                    lines.append("    );")
             else:
                 lines.append(
-                    f'    {var_name}["{field_name}"] = sol::policies('
-                    f'&{full_name}::{field_name}, sol::self_dependency{{}});'
+                    f'    lua_glue::BindAttr<{type_ref.cpp}>({var_name}, "{field_name}", &{full_name}::{field_name});'
                 )
         return lines
 
@@ -3098,7 +3115,7 @@ class Sol2Generator:
         ] = {}
         skipped_lines: list[str] = []
         selected: dict[
-            tuple[str, tuple[str, ...], bool],
+            tuple[str, tuple[str, ...], bool, bool],
             tuple[
                 int,
                 int,
@@ -3110,7 +3127,7 @@ class Sol2Generator:
                 bool,
             ],
         ] = {}
-        selected_order: list[tuple[str, tuple[str, tuple[str, ...], bool]]] = []
+        selected_order: list[tuple[str, tuple[str, tuple[str, ...], bool, bool]]] = []
         emission_order: list[tuple[str, str]] = []
         emitted_method_names: set[str] = set()
         configured_overrides: dict[str, ConfiguredMethodOverride] = {}
@@ -3160,7 +3177,7 @@ class Sol2Generator:
                 if planned.unsupported:
                     skipped_lines.append(f"    // Skipped {full_name}::{method.get('displayname')}: {planned.unsupported}.")
                     continue
-                key = (name, planned.signature_key, bool(method.get("static")))
+                key = (name, planned.signature_key, bool(method.get("static")), bool(method.get("const")))
                 lambda_code, reason = make_lambda(method_item, full_name, name)
                 if reason:
                     skipped_lines.append(f"    // Skipped {full_name}::{method.get('displayname')}: {reason}.")
@@ -3307,7 +3324,7 @@ class Sol2Generator:
 
             meta_function = OPERATOR_META_FUNCTIONS.get(name)
             if not meta_function:
-                skipped_lines.append(f"    // Skipped operator {full_name}::{name}; no sol meta mapping is available.")
+                skipped_lines.append(f"    // Skipped operator {full_name}::{name}; no Lua metamethod mapping is available.")
                 continue
 
             declared_params = method.get("parameters", [])
@@ -3423,7 +3440,7 @@ class Sol2Generator:
 
         dispatch_name = f"read_operator_{sanitize_identifier(full_name)}"
         lines = [
-            f"    auto {dispatch_name} = [](sol::this_state state, {full_name}& self, std::string type) -> sol::object {{",
+            f"    auto {dispatch_name} = [](lua_glue::ThisState state, {full_name}& self, std::string type) -> lua_glue::Object {{",
         ]
         for cpp_type, io_info in read_infos.values():
             checks = " || ".join(f'type == "{alias}"' for alias in io_info["aliases"])
@@ -3433,7 +3450,7 @@ class Sol2Generator:
                     "        {",
                     f"            {cpp_type} value{{}};",
                     "            self.operator>>(value);",
-                    f"            return sol::make_object(state, {io_info['result']});",
+                    f"            return lua_glue::MakeObject(state.value, {io_info['result']});",
                     "        }",
                 ]
             )
@@ -3448,7 +3465,7 @@ class Sol2Generator:
                 var_name,
                 "bitwise_right_shift",
                 [
-                    f"""[{dispatch_name}](sol::this_state state, {full_name}& self, std::string type) -> sol::object {{
+                    f"""[{dispatch_name}](lua_glue::ThisState state, {full_name}& self, std::string type) -> lua_glue::Object {{
     return {dispatch_name}(state, self, std::move(type));
 }}"""
                 ],
@@ -3514,8 +3531,8 @@ class Sol2Generator:
             call_target = f"static_cast<{dispatch_type}&>(self)"
 
         lines = [
-            f"    auto {index_fn} = [](sol::object key) -> {index_type} {{",
-            "        if (key.get_type() != sol::type::number || !key.is<lua_Integer>())",
+            f"    auto {index_fn} = [](lua_glue::Object key) -> {index_type} {{",
+            "        if (key.get_type() != lua_glue::Type::Number || !key.is<lua_Integer>())",
             f'            throw std::invalid_argument("{lua_path_for_type(full_name)} index must be an integer");',
             "        const lua_Integer index = key.as<lua_Integer>();",
         ]
@@ -3530,20 +3547,18 @@ class Sol2Generator:
             [
                 f"        return static_cast<{index_type}>(index);",
                 "    };",
-                f"    {var_name}[sol::meta_function::index] =",
+                f'    lua_glue::BindMetamethod({var_name}, "__index",',
             ]
         )
         append_indented_block(
             lines,
-            f"""sol::policies(
-    [{table_var}, {index_fn}](sol::this_state state, {full_name}& self, sol::object key) -> sol::object {{
-    if (key.get_type() != sol::type::number)
-        return {table_var}.get<sol::object>(key);
+            f"""[{table_var}, {index_fn}](lua_glue::ThisState state, {full_name}& self, lua_glue::Object key) -> lua_glue::Object {{
+    if (key.get_type() != lua_glue::Type::Number)
+        return {table_var}.get<lua_glue::Object>(key);
     const {index_type} index = {index_fn}(key);
-    return sol::make_object(state, std::ref({call_target}.operator[](index)));
+    return lua_glue::MakeObject(state.value, std::ref({call_target}.operator[](index)));
     }},
-    sol::self_dependency{{}}
-)""",
+    lua_glue::ReturnPolicy::ReferenceInternal)""",
             "        ",
         )
         lines.append("    ;")
@@ -3556,13 +3571,13 @@ class Sol2Generator:
             f'{cpp_string_literal(index_lua_type)}, {cpp_string_literal(value_lua_type)});'
         )
         if not is_const_type(return_type.cpp):
-            lines.append(f"    {var_name}[sol::meta_function::new_index] =")
+            lines.append(f'    lua_glue::BindMetamethod({var_name}, "__newindex",')
             append_indented_block(
                 lines,
-                f"""[{index_fn}]({full_name}& self, sol::object key, const {value_type}& value) {{
+                f"""[{index_fn}]({full_name}& self, lua_glue::Object key, const {value_type}& value) {{
     const {index_type} index = {index_fn}(key);
     {call_target}.operator[](index) = value;
-}}""",
+}})""",
                 "        ",
             )
             lines.append("    ;")
@@ -3670,6 +3685,7 @@ class Sol2Generator:
         if not name or name in IGNORE_NAMES:
             return []
         full_name = item.get("qualified_name") or f"{namespace_prefix}{name}"
+        enum_constant = is_anonymous_cpp_name(full_name) and "value" in item
         if is_anonymous_cpp_name(full_name):
             full_name = f"{namespace_prefix}{name}"
         type_ref = TypeRef.from_json(item.get("type"))
@@ -3679,6 +3695,8 @@ class Sol2Generator:
             f'{cpp_string_literal(type_ref_to_lua_type(type_ref))});'
         )
         stub_lines = [*stub_doc_lines(item), stub_line]
+        if enum_constant:
+            return [*stub_lines, f'    {table_var}.raw_set("{name}", static_cast<{type_ref.cpp}>({full_name}));']
         if is_window_handle(type_ref):
             _prelude, expr = result_value_expr(type_ref, full_name)
             return [*stub_lines, f'    {table_var}["{name}"] = {expr};']
@@ -3686,17 +3704,15 @@ class Sol2Generator:
             return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::to_utf8_string({full_name});']
         if is_filesystem_path(type_ref.cpp):
             return [*stub_lines, f'    {table_var}["{name}"] = {full_name}.string();']
-        if vector_element(type_ref.cpp):
-            return [*stub_lines, f'    {table_var}["{name}"] = sol::as_table({full_name});']
-        if optional_element(type_ref.cpp):
-            return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::optional_to_object(lua, {full_name});']
-        return [*stub_lines, f'    {table_var}["{name}"] = {full_name};']
+        if should_skip_type(type_ref):
+            return stub_lines
+        return [*stub_lines, f'    lua_glue::BindStaticAttr<{type_ref.cpp}>({table_var}, "{name}", &{full_name});']
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate sol2 binding source files from output/sfml_api.json.")
-    parser.add_argument("--api-json", default="output/sfml_api.json")
-    parser.add_argument("--output-root", default="output")
+    parser = argparse.ArgumentParser(description="Generate LuaGlue binding source files from output/LuaSF/sfml_api.json.")
+    parser.add_argument("--api-json", default="output/LuaSF/sfml_api.json")
+    parser.add_argument("--output-root", default="output/LuaSF")
     return parser.parse_args()
 
 
@@ -3705,9 +3721,9 @@ def main() -> int:
     api_path = Path(args.api_json).resolve()
     output_root = Path(args.output_root).resolve()
     api = json.loads(api_path.read_text(encoding="utf-8"))
-    generator = Sol2Generator(api, output_root)
+    generator = GlueGenerator(api, output_root)
     generator.generate()
-    print(f"Generated sol2 bindings for {len(api.get('files', []))} headers into {output_root}")
+    print(f"Generated LuaGlue bindings for {len(api.get('files', []))} headers into {output_root}")
     if generator.skipped:
         print(f"Skipped {len(generator.skipped)} signatures; see generated comments for details.")
     return 0

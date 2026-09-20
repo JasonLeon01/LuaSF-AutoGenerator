@@ -4,6 +4,7 @@ run-name: Build LuaSF packages for ${{ github.ref_name }} @ ${{ github.sha }}
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -144,6 +145,7 @@ jobs:
 
           $requiredRuntimeDlls = @(
               'LuaSF.dll',
+              'LuaGlue.dll',
               'lua.dll',
               'msvcp140.dll',
               'msvcp140_atomic_wait.dll',

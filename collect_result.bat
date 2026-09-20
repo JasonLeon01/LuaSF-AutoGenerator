@@ -41,8 +41,8 @@ set "LUAC_FILE=%BUILD_DIR%\tools\%CONFIG%\luac.exe"
 if not exist "%LUAC_FILE%" set "LUAC_FILE=%BUILD_DIR%\tools\luac.exe"
 
 set "STUB_FILE=%BUILD_DIR%\LuaSF.d.lua"
-set "CALLBACK_CODECS_FILE=%OUTPUT_DIR%\callback_codecs.json"
-set "SFML_API_FILE=%OUTPUT_DIR%\sfml_api.json"
+set "CALLBACK_CODECS_FILE=%OUTPUT_DIR%\LuaSF\callback_codecs.json"
+set "SFML_API_FILE=%OUTPUT_DIR%\LuaSF\sfml_api.json"
 
 if not exist "%EMBEDDED_BIN_DIR%\LuaSF.dll" (
     echo Missing embedded LuaSF.dll under "%EMBEDDED_BIN_DIR%".
@@ -117,34 +117,26 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "%OUTPUT_DIR%\include" (
-    robocopy "%OUTPUT_DIR%\include" "%EMBEDDED_RESULT_DIR%\include" /E /NFL /NDL /NJH /NJS /NP >nul
+if exist "%OUTPUT_DIR%\LuaSF\include" (
+    robocopy "%OUTPUT_DIR%\LuaSF\include" "%EMBEDDED_RESULT_DIR%\include" /E /NFL /NDL /NJH /NJS /NP >nul
     if errorlevel 8 exit /b 1
 )
 
-if exist "%BUILD_DIR%\generated_include\sol" (
-    robocopy "%BUILD_DIR%\generated_include\sol" "%EMBEDDED_RESULT_DIR%\include\sol" /E /NFL /NDL /NJH /NJS /NP >nul
-    if errorlevel 8 exit /b 1
-)
+
+robocopy "%OUTPUT_DIR%\LuaGlue\include" "%EMBEDDED_RESULT_DIR%\include" /E /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 exit /b 1
 
 if exist "%DEPENDENCY_DIR%\SFML\include" (
     robocopy "%DEPENDENCY_DIR%\SFML\include" "%EMBEDDED_RESULT_DIR%\include" /E /NFL /NDL /NJH /NJS /NP >nul
     if errorlevel 8 exit /b 1
 )
 
-if exist "%DEPENDENCY_DIR%\sol2\include" (
-    robocopy "%DEPENDENCY_DIR%\sol2\include" "%EMBEDDED_RESULT_DIR%\include" /E /NFL /NDL /NJH /NJS /NP >nul
-    if errorlevel 8 exit /b 1
-)
 
 if exist "%DEPENDENCY_DIR%\Lua\src" (
-    mkdir "%EMBEDDED_RESULT_DIR%\include\lua" >nul 2>nul
-    copy /y "%DEPENDENCY_DIR%\Lua\src\*.h" "%EMBEDDED_RESULT_DIR%\include\lua\" >nul
+    mkdir "%EMBEDDED_RESULT_DIR%\include" >nul 2>nul
+    copy /y "%DEPENDENCY_DIR%\Lua\src\*.h" "%EMBEDDED_RESULT_DIR%\include\" >nul
     if errorlevel 1 exit /b 1
-    copy /y "%DEPENDENCY_DIR%\Lua\src\*.hpp" "%EMBEDDED_RESULT_DIR%\include\lua\" >nul 2>nul
-    call :write_lua_compat_header lua.h
-    call :write_lua_compat_header lauxlib.h
-    call :write_lua_compat_header lualib.h
+    copy /y "%DEPENDENCY_DIR%\Lua\src\*.hpp" "%EMBEDDED_RESULT_DIR%\include\" >nul 2>nul
 )
 
 if exist "%EMBEDDED_LIB_DIR%" (
@@ -168,6 +160,13 @@ if exist "%SFML_LIB_DIR%" (
     copy /y "%SFML_LIB_DIR%\*.lib" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
     copy /y "%SFML_LIB_DIR%\*.exp" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
     copy /y "%SFML_LIB_DIR%\*.a" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+)
+
+for %%D in ("%BUILD_DIR%\LuaGlue" "%BUILD_DIR%\LuaGlue\%CONFIG%") do (
+    if exist "%%~D" (
+        copy /y "%%~D\*.lib" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+        copy /y "%%~D\*.a" "%EMBEDDED_RESULT_DIR%\lib\" >nul 2>nul
+    )
 )
 
 mkdir "%EMBEDDED_RESULT_DIR%\cmake" >nul 2>nul
@@ -207,12 +206,10 @@ if errorlevel 1 (
     dir /b "%EMBEDDED_RESULT_DIR%\tools"
     echo.
     echo include:
-    echo - LuaSF generated headers from output\include
+    echo - LuaSF generated headers from output\LuaSF\include
     echo - SFML public headers
-    echo - sol2 public headers
-    echo - Lua headers under include\lua
-    echo - CMake generated sol compatibility headers under include\sol
-    echo - Lua compatibility wrappers at include\lua.h, include\lauxlib.h, include\lualib.h
+    echo - LuaGlue public headers
+    echo - Native Lua 5.5 headers under include
     echo - Windows MSVC redistributable DLLs from requirements are bundled in bin
     if exist "%EMBEDDED_RESULT_DIR%\lib" (
         echo.
@@ -248,12 +245,4 @@ echo Headers: %EMBEDDED_RESULT_DIR%\include
 echo Host luac: %EMBEDDED_RESULT_DIR%\tools\luac.exe
 
 endlocal
-exit /b 0
-
-:write_lua_compat_header
-> "%EMBEDDED_RESULT_DIR%\include\%~1" echo #include "lua/%~1"
->> "%EMBEDDED_RESULT_DIR%\include\%~1" echo #undef LUA_VERSION_NUM
->> "%EMBEDDED_RESULT_DIR%\include\%~1" echo #define LUA_VERSION_NUM 504
->> "%EMBEDDED_RESULT_DIR%\include\%~1" echo #undef lua_newstate
->> "%EMBEDDED_RESULT_DIR%\include\%~1" echo #define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
 exit /b 0

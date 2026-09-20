@@ -21,7 +21,7 @@ set(LUASF_EMBEDDED_ARCHIVE_DIR "${{LUASF_BINARY_ROOT}}/lib/$<CONFIG>/embedded")
 
 set(LUASF_SFML_ROOT "" CACHE PATH "External SFML source project used by LuaSF")
 set(LUASF_LUA_ROOT "" CACHE PATH "External Lua source directory containing src/lua.h")
-set(LUASF_SOL2_ROOT "" CACHE PATH "External sol2 source directory containing include/sol2/sol.hpp")
+set(LUASF_GLUE_ROOT "${{LUASF_ROOT}}/../LuaGlue" CACHE PATH "LuaGlue source project")
 if(NOT LUASF_SFML_ROOT)
     message(FATAL_ERROR "LUASF_SFML_ROOT is required; point it at an SFML source project.")
 endif()
@@ -30,9 +30,6 @@ if(NOT EXISTS "${{LUASF_SFML_ROOT}}/CMakeLists.txt")
 endif()
 if(NOT EXISTS "${{LUASF_LUA_ROOT}}/src/lua.h")
     message(FATAL_ERROR "Lua source directory was not found: ${{LUASF_LUA_ROOT}}")
-endif()
-if(NOT EXISTS "${{LUASF_SOL2_ROOT}}/include/sol2/sol.hpp")
-    message(FATAL_ERROR "sol2 source directory was not found: ${{LUASF_SOL2_ROOT}}")
 endif()
 
 option(LUASF_BUILD_SHARED_SFML "Build SFML as shared libraries for LuaSF" ON)
@@ -122,6 +119,8 @@ if(NOT TARGET ${{LUASF_LUA_TARGET}})
         C_STANDARD_REQUIRED ON
         OUTPUT_NAME "lua"
         RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+        BUILD_WITH_INSTALL_RPATH FALSE
+        BUILD_RPATH "$<TARGET_FILE_DIR:LuaGlue::LuaGlue>;$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>;$<TARGET_FILE_DIR:sfml-system>"
         LIBRARY_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
         ARCHIVE_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/lib"
     )
@@ -169,56 +168,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_CXX_COMPILER_ID STREQUAL "Apple
     endif()
 endif()
 
-set(LUASF_SOL_COMPAT_INCLUDE "${{LUASF_BINARY_ROOT}}/generated_include")
-file(MAKE_DIRECTORY "${{LUASF_SOL_COMPAT_INCLUDE}}/sol")
-configure_file(
-    "${{LUASF_SOL2_ROOT}}/include/sol2/config.hpp"
-    "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/config.hpp"
-    COPYONLY
-)
-configure_file(
-    "${{LUASF_SOL2_ROOT}}/include/sol2/forward.hpp"
-    "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/forward.hpp"
-    COPYONLY
-)
-configure_file(
-    "${{LUASF_SOL2_ROOT}}/include/sol2/sol.hpp"
-    "${{LUASF_SOL_COMPAT_INCLUDE}}/sol/sol.hpp"
-    COPYONLY
-)
-file(CONFIGURE
-    OUTPUT "${{LUASF_SOL_COMPAT_INCLUDE}}/lua.h"
-    CONTENT "#include \"@LUASF_LUA_ROOT@/src/lua.h\"
-#undef LUA_VERSION_NUM
-#define LUA_VERSION_NUM 504
-#undef lua_newstate
-#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
-"
-    @ONLY
-    NEWLINE_STYLE UNIX
-)
-file(CONFIGURE
-    OUTPUT "${{LUASF_SOL_COMPAT_INCLUDE}}/lauxlib.h"
-    CONTENT "#include \"@LUASF_LUA_ROOT@/src/lauxlib.h\"
-#undef LUA_VERSION_NUM
-#define LUA_VERSION_NUM 504
-#undef lua_newstate
-#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
-"
-    @ONLY
-    NEWLINE_STYLE UNIX
-)
-file(CONFIGURE
-    OUTPUT "${{LUASF_SOL_COMPAT_INCLUDE}}/lualib.h"
-    CONTENT "#include \"@LUASF_LUA_ROOT@/src/lualib.h\"
-#undef LUA_VERSION_NUM
-#define LUA_VERSION_NUM 504
-#undef lua_newstate
-#define lua_newstate(f, ud) lua_newstate((f), (ud), 0u)
-"
-    @ONLY
-    NEWLINE_STYLE UNIX
-)
+if(NOT TARGET LuaGlue::LuaGlue)
+    if(NOT EXISTS "${{LUASF_GLUE_ROOT}}/CMakeLists.txt")
+        message(FATAL_ERROR "LuaGlue source project was not found: ${{LUASF_GLUE_ROOT}}")
+    endif()
+    set(LUAGLUE_LUA_TARGET "${{LUASF_LUA_TARGET}}")
+    if(LUASF_LIBRARY_TYPE STREQUAL "SHARED")
+        set(LUAGLUE_BUILD_SHARED ON)
+    else()
+        set(LUAGLUE_BUILD_SHARED OFF)
+    endif()
+    add_subdirectory("${{LUASF_GLUE_ROOT}}" "${{LUASF_BINARY_ROOT}}/LuaGlue")
+endif()
 
 set(LUASF_BINDING_HEADERS
 {binding_headers}
@@ -243,20 +204,14 @@ function(luasf_configure_binding_target target_name output_dir archive_dir)
 
     target_include_directories("${{_luasf_binding_objects}}"
         PRIVATE
-            "${{LUASF_SOL_COMPAT_INCLUDE}}"
             "${{LUASF_ROOT}}/include"
             "${{LUASF_SFML_ROOT}}/include"
             "${{LUASF_LUA_ROOT}}/src"
-            "${{LUASF_SOL2_ROOT}}/include"
     )
 
+    target_link_libraries("${{_luasf_binding_objects}}" PRIVATE LuaGlue::LuaGlue)
+
     target_compile_definitions("${{_luasf_binding_objects}}" PRIVATE
-        $<$<CONFIG:Debug>:SOL_ALL_SAFETIES_ON=1>
-        SOL_PRINT_ERRORS=0
-        SOL_SAFE_NUMERICS=1
-        SOL_USE_INTEROP=1
-        SOL_DEFAULT_AUTOMAGICAL_USERTYPES=0
-        SOL_USERTYPE_TYPE_BINDING_INFO=0
         LUASF_BUILD_DLL=1
     )
 
@@ -279,9 +234,10 @@ function(luasf_configure_binding_target target_name output_dir archive_dir)
     target_include_directories("${{target_name}}"
         PUBLIC
             "$<BUILD_INTERFACE:${{LUASF_ROOT}}/include>"
+            "$<BUILD_INTERFACE:${{LUASF_SFML_ROOT}}/include>"
     )
 
-    target_link_libraries("${{target_name}}" PRIVATE
+    target_link_libraries("${{target_name}}" PUBLIC LuaGlue::LuaGlue PRIVATE
         ${{LUASF_LUA_TARGET}}
         sfml-system
         sfml-window
@@ -329,6 +285,7 @@ function(luasf_copy_target_runtime_files target_name include_lua_runtime)
         list(APPEND _luasf_runtime_files "$<TARGET_FILE:{target_name}_lua_shared>")
     endif()
     foreach(_luasf_runtime_target IN ITEMS
+        LuaGlue::LuaGlue
         sfml-system
         sfml-window
         sfml-graphics
@@ -363,6 +320,7 @@ function(luasf_copy_runtime_files target_name)
         "$<TARGET_FILE:{target_name}_lua_shared>"
     )
     foreach(_luasf_runtime_target IN ITEMS
+        LuaGlue::LuaGlue
         sfml-system
         sfml-window
         sfml-graphics
@@ -410,6 +368,7 @@ function(luasf_add_lua_stub target_name)
     )
     target_link_libraries(${{target_name}}_lua_stub_dump PRIVATE
         "{target_name}_bindings"
+        LuaGlue::LuaGlue
         ${{LUASF_LUA_TARGET}}
         sfml-system
         sfml-window
@@ -419,6 +378,8 @@ function(luasf_add_lua_stub target_name)
     )
     set_target_properties(${{target_name}}_lua_stub_dump PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${{LUASF_BINARY_ROOT}}/bin"
+        BUILD_WITH_INSTALL_RPATH FALSE
+        BUILD_RPATH "$<TARGET_FILE_DIR:LuaGlue::LuaGlue>;$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>;$<TARGET_FILE_DIR:sfml-system>"
     )
 
     set(_luasf_stub_args "${{LUASF_LUA_STUB_OUTPUT}}")
@@ -427,6 +388,7 @@ function(luasf_add_lua_stub target_name)
         add_custom_command(TARGET ${{target_name}}_lua_stub_dump POST_BUILD
             COMMAND "${{CMAKE_COMMAND}}" -E copy_if_different
                 "$<TARGET_FILE:${{LUASF_LUA_TARGET}}>"
+                "$<TARGET_FILE:LuaGlue::LuaGlue>"
                 "$<TARGET_FILE:sfml-system>"
                 "$<TARGET_FILE:sfml-window>"
                 "$<TARGET_FILE:sfml-graphics>"
@@ -443,14 +405,14 @@ function(luasf_add_lua_stub target_name)
         if(APPLE)
             set(_luasf_stub_command
                 "${{CMAKE_COMMAND}}" -E env
-                "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>:$<TARGET_FILE_DIR:sfml-system>:$ENV{{DYLD_LIBRARY_PATH}}"
+                "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:LuaGlue::LuaGlue>:$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>:$<TARGET_FILE_DIR:sfml-system>:$ENV{{DYLD_LIBRARY_PATH}}"
                 "$<TARGET_FILE:${{target_name}}_lua_stub_dump>"
                 ${{_luasf_stub_args}}
             )
         else()
             set(_luasf_stub_command
                 "${{CMAKE_COMMAND}}" -E env
-                "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>:$<TARGET_FILE_DIR:sfml-system>:$ENV{{LD_LIBRARY_PATH}}"
+                "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:LuaGlue::LuaGlue>:$<TARGET_FILE_DIR:${{LUASF_LUA_TARGET}}>:$<TARGET_FILE_DIR:sfml-system>:$ENV{{LD_LIBRARY_PATH}}"
                 "$<TARGET_FILE:${{target_name}}_lua_stub_dump>"
                 ${{_luasf_stub_args}}
             )
@@ -459,6 +421,7 @@ function(luasf_add_lua_stub target_name)
 
     add_dependencies(${{target_name}}_lua_stub_dump
         "{target_name}_bindings"
+        LuaGlue::LuaGlue
         ${{LUASF_LUA_TARGET}}
         sfml-system
         sfml-window

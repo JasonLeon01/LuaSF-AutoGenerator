@@ -12,17 +12,17 @@ namespace lua_sf {
 
 class LuaDrawable : public sf::Drawable {
 public:
-  using DrawCallback =
-      std::function<void(sf::RenderTarget &, sf::RenderStates)>;
+    using DrawCallback =
+        std::function<void(sf::RenderTarget&, sf::RenderStates)>;
 
-  explicit LuaDrawable(DrawCallback drawCallback);
+    explicit LuaDrawable(DrawCallback drawCallback);
 
 private:
-  void draw(sf::RenderTarget &target, sf::RenderStates states) const override;
+    void draw(sf::RenderTarget& target, sf::RenderStates states) const override;
 
-  DrawCallback m_drawCallback;
+    DrawCallback m_drawCallback;
 };
 
-} // namespace lua_sf
+}  // namespace lua_sf
 
-void bind_Drawable(sol::state_view lua);
+void bind_Drawable(lua_glue::StateView lua);

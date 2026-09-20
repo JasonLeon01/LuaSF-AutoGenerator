@@ -21,7 +21,6 @@ SFML_ME_OH_REPOSITORY=
 SFML_ME_OH_TAG=
 LUA_VERSION=
 LUA_SHA256=
-SOL2_VERSION=
 
 while IFS='=' read -r key value; do
     value=$(printf '%s' "$value" | tr -d '\r')
@@ -36,14 +35,13 @@ while IFS='=' read -r key value; do
         SFML_ME_OH_TAG) SFML_ME_OH_TAG=$value ;;
         LUA_VERSION) LUA_VERSION=$value ;;
         LUA_SHA256) LUA_SHA256=$value ;;
-        SOL2_VERSION) SOL2_VERSION=$value ;;
     esac
 done < versions.conf
 
 if [ -z "$SFML_REPOSITORY" ] || [ -z "$SFML_TAG" ] ||
    [ -z "$SFML_ME_REPOSITORY" ] || [ -z "$SFML_ME_TAG" ] ||
    [ -z "$SFML_ME_OH_REPOSITORY" ] || [ -z "$SFML_ME_OH_TAG" ] ||
-   [ -z "$LUA_VERSION" ] || [ -z "$LUA_SHA256" ] || [ -z "$SOL2_VERSION" ]; then
+   [ -z "$LUA_VERSION" ] || [ -z "$LUA_SHA256" ]; then
     echo "Missing required versions in versions.conf." >&2
     exit 1
 fi
@@ -119,32 +117,6 @@ download_url() {
     fi
 }
 
-apply_sol2_pr1606_patch() {
-    echo "Applying sol2 PR #1606 patch if needed..."
-    patch_file="$SCRIPT_DIR/cmake/sol/pr1606.patch"
-    # The published sol2 headers use CRLF line endings, so the patch has to
-    # ignore whitespace to match.
-    if git apply --ignore-whitespace --reverse --check --directory=third_party/sol2 -p1 "$patch_file" >/dev/null 2>&1; then
-        echo "PR #1606 patch already applied to sol2."
-        return
-    fi
-    git apply --ignore-whitespace --check --directory=third_party/sol2 -p1 "$patch_file"
-    git apply --ignore-whitespace --directory=third_party/sol2 -p1 "$patch_file"
-}
-
-if [ ! -f "third_party/sol2/include/sol2/sol.hpp" ]; then
-    echo "Downloading sol2 headers..."
-    mkdir -p "third_party/sol2/include/sol2"
-    for file in config.hpp forward.hpp sol.hpp; do
-        download_url \
-            "https://github.com/ThePhD/sol2/releases/download/v$SOL2_VERSION/$file" \
-            "third_party/sol2/include/sol2/$file"
-    done
-else
-    echo "Using existing third_party/sol2."
-fi
-
-apply_sol2_pr1606_patch
 
 echo
 echo "Dependencies are ready in $SCRIPT_DIR/third_party."

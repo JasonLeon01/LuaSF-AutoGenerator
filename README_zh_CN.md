@@ -2,11 +2,11 @@
 
 [English](README.md) | 简体中文
 
-LuaSF AutoGenerator 会生成一个基于 CMake 的 Lua 模块，通过 sol2 将 SFML 暴露给 Lua。生成的模块既可以以源码形式接入，也可以以收集后的二进制包形式接入。
+LuaSF AutoGenerator 会生成一个基于 CMake 的 Lua 模块，通过 LuaGlue 将 SFML 暴露给 Lua。生成的模块既可以以源码形式接入，也可以以收集后的二进制包形式接入。
 
 生成的 Lua 模块名为 `LuaSF`。在 CMake 中，嵌入式使用方链接 `LuaSF::LuaSF`。
 
-LuaSF 只是一个绑定器。它不自带 Lua、sol2 和 SFML，也不创建或关闭 `lua_State`：VM 由宿主持有，并通过 `LuaSF_register` 交给 LuaSF。
+LuaSF 只是一个绑定器。它随源码分发独立的 LuaGlue 运行时，不自带 Lua 和 SFML，也不创建或关闭 `lua_State`：VM 由宿主持有，并通过 `LuaSF_register` 交给 LuaSF。
 
 ## 环境要求
 
@@ -50,7 +50,7 @@ build.bat Release ME
 sh build.sh Release ME
 ```
 
-这会在 `output/` 下创建生成后的源码工程，并构建嵌入式 LuaSF 动态库、宿主 `luac` 以及 Lua language-server stub。
+这会在 `output/LuaSF/` 下创建生成后的源码工程，在 `output/LuaGlue/` 下复制胶水运行时，并构建嵌入式 LuaSF 动态库、宿主 `luac` 以及 Lua language-server stub。
 
 切换变体会替换 `third_party/SFML`；`init` 和 `build` 都会在开始工作前校验当前检出的 SFML 是否与请求的变体一致。
 
@@ -78,6 +78,8 @@ pack_result.bat
 sh pack_result.sh
 ```
 
+无需收集二进制、仅打包生成源码时，运行 `sh pack_result.sh --source-only` 或 `pack_result.bat --source-only`。此模式保留 `output/packages/` 中的其他压缩包；在 `ME-OH` 工作区生成 `LuaSF-source-ME`，因为两者共用绑定接口。源码包仅包含 `LuaSF/` 与 `LuaGlue/` 两个工程。
+
 压缩包会写入 `output/packages/`：
 
 | 变体 | 源码包 | 嵌入式包 |
@@ -88,16 +90,18 @@ sh pack_result.sh
 
 `pack_result.sh` 生成 `.tar.gz` 压缩包，`pack_result.bat` 生成 `.zip` 压缩包。
 
-ME 与 ME-OH 的绑定接口相同，因此 ME-OH 构建只生成嵌入式包。ME 源码包同时支持这两个变体；源码包不包含 SFML。
+ME 与 ME-OH 的绑定接口相同，因此默认 ME-OH 打包只生成嵌入式包。ME 源码包同时支持这两个变体；源码包不包含 SFML。
 
-CI 仅在推送 `v*` tag 时运行。所有构建及包检查通过后，创建包含十个附件的草稿 Release：四个源码包、六个嵌入式包。普通分支推送不运行 CI，工作流不会发布草稿或覆盖已有 Release。
+无需推送 tag 时，可在 GitHub 打开 **Actions → Build packages → Run workflow**，选择要构建的分支。这会运行 Windows VS2022 x64 与 macOS arm64 的 default、ME、ME-OH 构建矩阵，检查包并上传可下载的 Actions artifacts，不创建 Release。GitHub 要求默认分支中已存在支持手动触发的 workflow，才会提供此入口。
+
+推送 `v*` tag 会运行发布工作流。所有构建及包检查通过后，创建包含十个附件的草稿 Release：四个源码包、六个嵌入式包。普通分支推送不运行 CI，工作流不会发布草稿或覆盖已有 Release。
 
 ## 从 CMake 工程使用
 
 支持两种接入方式：
 
 - **包集成**：将 `output/result/embedded/` 复制到你的工程中，例如复制为 `LuaSF/`。
-- **源码集成**：将生成的 `output/` 源码工程复制或 vendor 到你的工程中，例如复制为 `LuaSF/`。
+- **源码集成**：将生成的 `output/LuaSF/` 与 `output/LuaGlue/` 两个兄弟目录复制或 vendor 到你的工程中。
 
 嵌入式使用的 CMake 集成目标是 `LuaSF::LuaSF`。
 
@@ -129,12 +133,11 @@ luasf_copy_runtime_dlls(SFLua)
 
 ### 源码集成
 
-当你已经复制或 vendor 了生成的 `output/` 源码工程时，使用这种方式。
+当你已经复制或 vendor 了生成的 `output/LuaSF/` 与 `output/LuaGlue/` 两个兄弟目录时，使用这种方式。
 
-源码工程不自带依赖。通过 `LUASF_LUA_ROOT`、`LUASF_SOL2_ROOT` 和 `LUASF_SFML_ROOT` 三个 cache 变量指向你自己的 Lua、sol2 和 SFML 检出目录，三者都是必需的：
+源码包解压后直接得到 `LuaSF/` 与 `LuaGlue/`。LuaSF 优先复用现有的 `LuaGlue::LuaGlue` target，否则添加兄弟目录工程；可通过 `LUASF_GLUE_ROOT` 覆盖路径。必需的 `LUASF_LUA_ROOT` 与 `LUASF_SFML_ROOT` cache 变量分别指向 Lua 与 SFML 检出：
 
 - `LUASF_LUA_ROOT` — Lua 源码目录，包含 `src/lua.h`。
-- `LUASF_SOL2_ROOT` — sol2 源码目录，包含 `include/sol2/sol.hpp`。LuaSF 需要 `cmake/sol/pr1606.patch` 中的 sol2 `optional::emplace` 修复；LuaSF 仓库会对自己那份检出打上补丁，你的检出也需要打，否则编译不过。
 - `LUASF_SFML_ROOT` — SFML 源码工程。如果你的工程已经提供 `sfml-*` target，LuaSF 会复用它们，而不会重复 add_subdirectory。
 
 ```cmake
@@ -144,7 +147,6 @@ project(SFLua LANGUAGES C CXX)
 
 set(LUASF_LUA_STUB_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/stub/LuaSF.d.lua")
 set(LUASF_LUA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Lua")
-set(LUASF_SOL2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sol2")
 set(LUASF_SFML_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SFML")
 
 add_subdirectory(LuaSF)
@@ -326,11 +328,15 @@ LuaSF 以 `LUA_RIDX_MAINTHREAD` 作为每个已登记 `lua_State*`（包括 coro
 
 宿主必须让所有 Lua 入口（包括 `lua_pcall`、`luaL_dofile` 及同类 API）与 native callback 串行化。每个入口都应在成功的 `LuaSF_enter_state` 后执行并匹配 `LuaSF_leave_state`，或者安装 execution hooks，并让宿主执行始终使用同一把可重入/递归 VM lock。effect 路径有意只使用非阻塞 try-enter hook。effect callback 绝不得对自己所属的 source 调用需等待 producer 的生命周期操作，否则该操作会等待当前 callback 自身。
 
+C++ 宿主可在安装执行 hooks 后，通过 `lua_glue::SetStateOwnsExecutionHook` 启用嵌套值访问优化。所有权探针必须报告当前线程是否实际持有 VM 锁，不得阻塞、分配内存、调用 Lua、重入 LuaGlue 或修改状态。内部值操作仅在探针确认仍持锁且 hooks 版本未变化时复用外层执行范围。公开的 `ExecutionScope`、`TryExecutionScope` 与 enter/leave API 仍保留各自的进入记录。更换执行 hooks 会清除所有权探针，需要时应重新安装。
+
 关闭 state 前必须先停止 callback producer，并在 state 仍有效时解除或销毁它们的 processor/factory，然后严格执行 `LuaSF_quiesce_state` → `LuaSF_shutdown_state` → `lua_close`。quiesce/shutdown 不能替代停止 producer thread；shutdown 之后 callback 不得再访问该 state。
 
 ## 运行时说明
 
 LuaSF 会被构建为动态库。运行时，可执行程序必须能够加载 LuaSF 本身、Lua 运行时和 SFML 运行时库。可以使用 `luasf_copy_runtime_dlls(target)` 或 `luasf_copy_runtime_files(target)` 将所需运行时库复制到可执行文件旁边。
+
+LuaGlue 是只依赖 Lua 5.5 的 C++20 CMake 工程，支持关闭 RTTI，并导出 `LuaGlue::LuaGlue`。设置 `LUAGLUE_LUA_TARGET` 可复用宿主 Lua target，独立配置时也可查找 Lua。桌面共享同一个运行时，移动平台静态链接。绑定使用 `.new(...)`、实际实例和静态属性、确定的 callable 签名、按调用求值的尾部默认参数与各源文件中的 `constexpr` 文档数组。拥有独立值语义的类型额外提供 `copy()`、`deepcopy()`，资源类型不自动获得深复制。
 
 ## 许可证
 
@@ -346,6 +352,5 @@ LuaSF 不附带这些依赖；版本表记录构建脚本会下载哪些变体�
 | [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `310ME-iOSJoystick` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
 | [SFML-ME-OH](https://github.com/JasonLeon01/SFML-ME) | `310-ME-OH-GLESVER` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
-| [sol2](https://github.com/ThePhD/sol2) | 3.3.0 | [MIT](https://github.com/ThePhD/sol2/blob/develop/LICENSE.txt) |
 
 SFML 还可能附带其他外部库，这些库遵循各自的许可证；详见 SFML 文档以及 `third_party/SFML/license.md`。

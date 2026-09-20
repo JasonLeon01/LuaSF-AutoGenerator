@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+#include "LuaSFValueTraits.hpp"
+
 #if defined(_WIN32)
 #if defined(LUASF_BUILD_DLL)
 #define LUASF_API __declspec(dllexport)

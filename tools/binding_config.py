@@ -10,7 +10,7 @@ Sections
 1. TypeLifecycle       — which types need long-lived memory/stream tracking
 2. TypeConversion      — C++ ↔ Lua type conversion rules
 3. BindingOwnership    — which header/binding unit owns which type
-4. OperatorMapping     — C++ operator → sol meta_function
+4. OperatorMapping     — C++ operator → Lua metamethod
 5. MethodOverrides     — exact native method helper descriptors
 6. Binding Templates   — C++ code templates with placeholder substitution
 """
@@ -337,7 +337,7 @@ def qualified_name_for_token_from_canonical(token: str, canonical: str) -> str |
 def qualify_known_public_type_tokens(value: str, canonical: str) -> str:
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
-        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
+        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "lua_glue::")):
             return token
         alias = PUBLIC_TYPE_ALIASES.get(token)
         if alias:
@@ -355,7 +355,7 @@ def qualify_public_spelling(source: str, canonical: str) -> str:
     canonical_core = core_cpp_type(canonical)
     if not source_core or source_core in CPP_BUILTIN_TYPES:
         return source
-    if source_core.startswith(("std::", "sol::", "lua_")):
+    if source_core.startswith(("std::", "lua_glue::", "lua_")):
         return source
     if canonical_core.startswith("sf::") and not source_core.startswith("sf::"):
         replacement = f"sf::{source_core}"
@@ -368,7 +368,7 @@ def qualify_public_spelling(source: str, canonical: str) -> str:
 def qualify_sfml_template_aliases(value: str, canonical: str) -> str:
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
-        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "sol::")):
+        if token in CPP_BUILTIN_TYPES or token.startswith(("sf::", "std::", "lua_glue::")):
             return token
         alias = PUBLIC_TYPE_ALIASES.get(token)
         if alias:
@@ -875,7 +875,7 @@ TEMPLATE_SPECIALIZATION_OVERRIDES: dict[str, TemplateSpecializationOverride] = {
 
 
 # ===========================================================================
-# 4. Operator → sol meta_function Mapping
+# 4. Operator → Lua metamethod Mapping
 # ===========================================================================
 
 OPERATOR_META_FUNCTIONS: dict[str, str] = {
@@ -998,26 +998,26 @@ _t("ll_reset_nonvoid",
 
 _t("template_unpack",
     'LUASF_STUB_FUNCTION("{lua_path}", "unpack", "fun(self: {lua_path}): {field_lua_returns}");',
-    '{var_name}.set_function("unpack", [](const {cpp_type}& self) {{',
+    'lua_glue::BindCallable({var_name}, "unpack", [](const {cpp_type}& self) {{',
     '    return std::make_tuple({field_exprs});',
     '}});',
 )
 
 _t("template_components_tostring",
-    '{var_name}[sol::meta_function::to_string] = [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
+    'lua_glue::BindMetamethod({var_name}, "__tostring", [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
     '    std::ostringstream stream;',
     '    stream << name << "(" << {stream_components} << ")";',
     '    return stream.str();',
-    '}};',
+    '}});',
 )
 
 _t("template_rect_tostring",
-    '{var_name}[sol::meta_function::to_string] = [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
+    'lua_glue::BindMetamethod({var_name}, "__tostring", [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
     '    std::ostringstream stream;',
     '    stream << name << "(" << self.position.x << ", " << self.position.y << ", "',
     '           << self.size.x << ", " << self.size.y << ")";',
     '    return stream.str();',
-    '}};',
+    '}});',
 )
 
 _t("template_rect_scalar_constructor",
@@ -1028,7 +1028,7 @@ _t("template_rect_scalar_constructor",
 )
 
 _t("template_matrix_array_constructor",
-    '[](sol::table values) {{',
+    '[](lua_glue::Table values) {{',
     '    auto buffer = lua_sf::array_from_object<float>(values);',
     '    if (buffer.size() != {element_count})',
     '        throw std::runtime_error("matrix constructor expects exactly {element_count} float values");',
@@ -1037,27 +1037,27 @@ _t("template_matrix_array_constructor",
 )
 
 _t("template_matrix_array_field",
-    '{var_name}.set("array", sol::property(',
+    'lua_glue::BindProperty({var_name}, "array",',
     '    [](const {cpp_type}& self) {{',
-    '        return sol::as_table(std::vector<float>(self.array.begin(), self.array.end()));',
+    '        return lua_glue::AsTable(std::vector<float>(self.array.begin(), self.array.end()));',
     '    }},',
-    '    []({cpp_type}& self, sol::object values) {{',
+    '    []({cpp_type}& self, lua_glue::Object values) {{',
     '        auto buffer = lua_sf::array_from_object<float>(values);',
     '        if (buffer.size() != self.array.size())',
     '            throw std::runtime_error("matrix array assignment has the wrong number of float values");',
     '        std::copy(buffer.begin(), buffer.end(), self.array.begin());',
-    '    }}));',
+    '    }});',
 )
 
 _t("template_matrix_copy",
     'LUASF_STUB_FUNCTION("{lua_path}", "copyMatrix", "fun(source: sf.Transform, dest: {lua_path})");',
-    '{var_name}.set_function("copyMatrix", [](const sf::Transform& source, {cpp_type}& dest) {{',
+    'lua_glue::BindCallable({var_name}, "copyMatrix", [](const sf::Transform& source, {cpp_type}& dest) {{',
     '    sf::priv::copyMatrix(source, dest);',
     '}});',
 )
 
 _t("template_matrix_tostring",
-    '{var_name}[sol::meta_function::to_string] = [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
+    'lua_glue::BindMetamethod({var_name}, "__tostring", [name = std::string("{lua_leaf}")](const {cpp_type}& self) {{',
     '    std::ostringstream stream;',
     '    stream << name << "(";',
     '    for (std::size_t index = 0; index < self.array.size(); ++index) {{',
@@ -1067,14 +1067,14 @@ _t("template_matrix_tostring",
     '    }}',
     '    stream << ")";',
     '    return stream.str();',
-    '}};',
+    '}});',
 )
 
 
 # ===========================================================================
 # 7. Generator Configuration
 #
-# Constants used by ``generate_sol2_bindings.py`` and
+# Constants used by ``generate_glue_bindings.py`` and
 # ``generate_build_files.py`` for filtering, type classification, and
 # special-case handling.
 # ===========================================================================
@@ -1294,7 +1294,7 @@ CALLBACK_CODEC_REGISTRY: tuple[CallbackCodec, ...] = (
     ),
 )
 
-# TYPE_DECL_KINDS (used by both generate_sol2_bindings and generate_build_files;
+# TYPE_DECL_KINDS (used by both generate_glue_bindings and generate_build_files;
 # includes CLASS_TEMPLATE for the build-file scanner)
 TYPE_DECL_KINDS: frozenset[str] = frozenset({
     "CLASS_DECL", "STRUCT_DECL", "CLASS_TEMPLATE",
@@ -1326,4 +1326,24 @@ STRING_TYPES: frozenset[str] = frozenset({
 
 MODULE_ORDER: dict[str, int] = {
     "System": 0, "Window": 1, "Graphics": 2, "Audio": 3, "Network": 4,
+}
+
+# Complete native value semantics have been checked for these non-template types.
+# Private storage is included by the native copy; no Lua/resource references occur.
+INDEPENDENT_VALUE_TYPES = frozenset({
+    "sf::Angle", "sf::Color", "sf::Time", "sf::Transform", "sf::Vertex",
+    "sf::VideoMode", "sf::ContextSettings", "sf::IpAddress",
+})
+MANUAL_INDEPENDENT_VALUE_HEADERS = {
+    name: "SFML/Window/Event.hpp"
+    for name in ["sf::Event", *(
+        "sf::Event::" + payload for payload in (
+            "Closed", "Resized", "FocusLost", "FocusGained", "TextEntered",
+            "KeyPressed", "KeyReleased", "MouseWheelScrolled", "MouseButtonPressed",
+            "MouseButtonReleased", "MouseMoved", "MouseMovedRaw", "MouseEntered",
+            "MouseLeft", "JoystickButtonPressed", "JoystickButtonReleased",
+            "JoystickMoved", "JoystickConnected", "JoystickDisconnected", "TouchBegan",
+            "TouchMoved", "TouchEnded", "SensorChanged",
+        )
+    )]
 }
