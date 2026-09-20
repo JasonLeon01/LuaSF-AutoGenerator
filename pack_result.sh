@@ -136,10 +136,13 @@ rm -rf "$PACKAGES_DIR"
 mkdir -p "$STAGING_DIR"
 
 # Source package: output/ without build, bin, result, packages.
-mkdir -p "$STAGING_DIR/$SOURCE_NAME"
-find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 \
-    ! -name build ! -name bin ! -name result ! -name packages \
-    -exec cp -R {} "$STAGING_DIR/$SOURCE_NAME/" \;
+# ME-OH consumes the ME source package; only its embedded package is distinct.
+if [ "$SFML_VARIANT" != "ME-OH" ]; then
+    mkdir -p "$STAGING_DIR/$SOURCE_NAME"
+    find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 \
+        ! -name build ! -name bin ! -name result ! -name packages \
+        -exec cp -R {} "$STAGING_DIR/$SOURCE_NAME/" \;
+fi
 
 # Embedded package with a named top-level folder.
 mkdir -p "$STAGING_DIR/$EMBEDDED_NAME"
@@ -147,7 +150,9 @@ cp -R "$EMBEDDED_RESULT_DIR"/. "$STAGING_DIR/$EMBEDDED_NAME"/
 
 (
     cd "$STAGING_DIR"
-    tar -czf "$SOURCE_ARCHIVE" "$SOURCE_NAME"
+    if [ "$SFML_VARIANT" != "ME-OH" ]; then
+        tar -czf "$SOURCE_ARCHIVE" "$SOURCE_NAME"
+    fi
     tar -czf "$EMBEDDED_ARCHIVE" "$EMBEDDED_NAME"
 )
 
@@ -155,5 +160,9 @@ rm -rf "$STAGING_DIR"
 
 echo
 echo "Done."
-echo "Source: $SOURCE_ARCHIVE"
+if [ "$SFML_VARIANT" != "ME-OH" ]; then
+    echo "Source: $SOURCE_ARCHIVE"
+else
+    echo "Source: use LuaSF-source-ME"
+fi
 echo "Embedded: $EMBEDDED_ARCHIVE"

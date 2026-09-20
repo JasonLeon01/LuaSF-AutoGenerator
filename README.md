@@ -84,9 +84,13 @@ Archives are written to `output/packages/`:
 | --- | --- | --- |
 | upstream SFML | `LuaSF-source.{tar.gz\|zip}` | `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 | `ME` | `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
-| `ME-OH` | `LuaSF-source-ME-OH.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
+| `ME-OH` | Use `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 
 `pack_result.sh` creates `.tar.gz` archives. `pack_result.bat` creates `.zip` archives.
+
+ME and ME-OH share the same binding interfaces, so ME-OH builds only produce an embedded archive. The ME source archive supports both variants; source archives do not include SFML.
+
+CI runs only when a `v*` tag is pushed. After all builds and package checks pass, it creates a draft Release with ten assets: four source archives and six embedded archives. Ordinary branch pushes do not run CI, and the workflow does not publish the draft or overwrite an existing Release.
 
 ## Use From A CMake Project
 
@@ -262,6 +266,8 @@ while window:isOpen() do
     window:display()
 end
 ```
+
+`sf.WindowHandle` is a non-owning wrapper around the platform's native window handle. Use `sf.WindowHandle.new(integer)` or `fromInteger(integer)` to construct it and `toInteger()` to recover the value. The C++ wrapper uses `std::uintptr_t` for integer conversion. Window constructors and `create` accept the wrapper; `getNativeHandle` returns it. Native handles are unwrapped through the C++-only `getHandle()` inside binding lambdas.
 
 ## Packaged CMake Items
 

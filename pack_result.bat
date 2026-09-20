@@ -73,10 +73,12 @@ echo Platform: %PLATFORM_TAG%
 echo Packages: %PACKAGES_DIR%
 
 if exist "%PACKAGES_DIR%" rmdir /s /q "%PACKAGES_DIR%"
-mkdir "%STAGING_DIR%\%SOURCE_NAME%"
 mkdir "%STAGING_DIR%\%EMBEDDED_NAME%"
 
 rem Source package: output\ without build, bin, result, packages.
+rem ME-OH consumes the ME source package; only its embedded package is distinct.
+if "%SFML_VARIANT%"=="ME-OH" goto :pack_embedded
+mkdir "%STAGING_DIR%\%SOURCE_NAME%"
 for /f "delims=" %%I in ('dir /b /a "%OUTPUT_DIR%"') do (
     if /i not "%%I"=="build" if /i not "%%I"=="bin" if /i not "%%I"=="result" if /i not "%%I"=="packages" (
         if exist "%OUTPUT_DIR%\%%I\*" (
@@ -87,13 +89,15 @@ for /f "delims=" %%I in ('dir /b /a "%OUTPUT_DIR%"') do (
     )
 )
 
-xcopy /e /i /q /y "%EMBEDDED_RESULT_DIR%\*" "%STAGING_DIR%\%EMBEDDED_NAME%\" >nul
-
 powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%SOURCE_NAME%' -DestinationPath '%SOURCE_ZIP%' -CompressionLevel Optimal"
 if errorlevel 1 (
     echo Failed to create "%SOURCE_ZIP%".
     exit /b 1
 )
+
+:pack_embedded
+xcopy /e /i /q /y "%EMBEDDED_RESULT_DIR%\*" "%STAGING_DIR%\%EMBEDDED_NAME%\" >nul
+
 powershell -NoProfile -Command "Compress-Archive -LiteralPath '%STAGING_DIR%\%EMBEDDED_NAME%' -DestinationPath '%EMBEDDED_ZIP%' -CompressionLevel Optimal"
 if errorlevel 1 (
     echo Failed to create "%EMBEDDED_ZIP%".
@@ -104,7 +108,11 @@ rmdir /s /q "%STAGING_DIR%"
 
 echo.
 echo Done.
-echo Source: %SOURCE_ZIP%
+if "%SFML_VARIANT%"=="ME-OH" (
+    echo Source: use LuaSF-source-ME
+) else (
+    echo Source: %SOURCE_ZIP%
+)
 echo Embedded: %EMBEDDED_ZIP%
 exit /b 0
 

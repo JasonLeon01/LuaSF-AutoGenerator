@@ -1043,7 +1043,7 @@ def from_lua_expr(
     cpp = type_ref.cpp
     base = remove_cvref(cpp)
     if is_window_handle(type_ref):
-        return [], f"{name}.native()"
+        return [], f"{name}.getHandle()"
     if base in INTEGER_TYPES:
         return [], f"{name}.value()"
     if is_std_function(type_ref):
@@ -1306,6 +1306,8 @@ def special_pointer_return_lua_type(function_name: str | None) -> str | None:
 
 
 def type_ref_to_lua_type(type_ref: TypeRef) -> str:
+    if is_window_handle(type_ref):
+        return "sf.WindowHandle"
     return cpp_type_to_lua_type(type_ref.cpp or type_ref.source)
 
 
@@ -1598,7 +1600,9 @@ def plan_parameters(
         plan.lua_params.append(f"{lua_type} {name}")
         plan.prelude.extend(prelude)
         plan.call_args.append(expr)
-        if is_std_function(type_ref):
+        if is_window_handle(type_ref):
+            plan.stub_param_types[sanitize_lua_identifier(name)] = type_ref_to_lua_type(type_ref)
+        elif is_std_function(type_ref):
             plan.stub_param_types[sanitize_lua_identifier(name)] = std_function_lua_type(
                 type_ref,
                 function_name,
@@ -2757,6 +2761,9 @@ class Sol2Generator:
         if not name or name in IGNORE_NAMES:
             return []
         qualified_name = clean_cpp_type(item.get("qualified_name") or "")
+        if qualified_name == "sf::WindowHandle":
+            # bind_Handle owns the wrapper, regardless of the native alias type.
+            return []
         specialization = self.alias_specializations.get(qualified_name)
         if specialization is not None:
             return self._emit_specialization_alias(item, table_var, specialization)
@@ -3673,7 +3680,8 @@ class Sol2Generator:
         )
         stub_lines = [*stub_doc_lines(item), stub_line]
         if is_window_handle(type_ref):
-            return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::window_handle_to_integer({full_name});']
+            _prelude, expr = result_value_expr(type_ref, full_name)
+            return [*stub_lines, f'    {table_var}["{name}"] = {expr};']
         if is_sf_string(type_ref.cpp):
             return [*stub_lines, f'    {table_var}["{name}"] = lua_sf::to_utf8_string({full_name});']
         if is_filesystem_path(type_ref.cpp):

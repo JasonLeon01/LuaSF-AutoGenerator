@@ -84,9 +84,13 @@ sh pack_result.sh
 | --- | --- | --- |
 | 上游 SFML | `LuaSF-source.{tar.gz\|zip}` | `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 | `ME` | `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
-| `ME-OH` | `LuaSF-source-ME-OH.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
+| `ME-OH` | 使用 `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 
 `pack_result.sh` 生成 `.tar.gz` 压缩包，`pack_result.bat` 生成 `.zip` 压缩包。
+
+ME 与 ME-OH 的绑定接口相同，因此 ME-OH 构建只生成嵌入式包。ME 源码包同时支持这两个变体；源码包不包含 SFML。
+
+CI 仅在推送 `v*` tag 时运行。所有构建及包检查通过后，创建包含十个附件的草稿 Release：四个源码包、六个嵌入式包。普通分支推送不运行 CI，工作流不会发布草稿或覆盖已有 Release。
 
 ## 从 CMake 工程使用
 
@@ -262,6 +266,8 @@ while window:isOpen() do
     window:display()
 end
 ```
+
+`sf.WindowHandle` 是平台原生窗口句柄的非拥有型包装类。通过 `sf.WindowHandle.new(integer)` 或 `fromInteger(integer)` 构造，通过 `toInteger()` 取回整数值；C++ 包装类使用 `std::uintptr_t` 进行整数转换。窗口构造与 `create` 接收包装对象，`getNativeHandle` 返回包装对象。绑定 lambda 内通过仅供 C++ 使用的 `getHandle()` 取得原生句柄。
 
 ## 包内 CMake 项
 

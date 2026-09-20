@@ -519,9 +519,9 @@ _register_conv(TypeConversion(
 
 _register_conv(TypeConversion(
     cpp_types=("sf::WindowHandle",),
-    lua_type="integer",
-    from_lua_template="lua_sf::window_handle_from_integer({name})",
-    to_lua_template="lua_sf::window_handle_to_integer({expr})",
+    lua_type="sf.WindowHandle",
+    from_lua_template="{name}.getHandle()",
+    to_lua_template="lua_sf::WindowHandle::fromNative({expr})",
     is_return_wrapper=True,
 ))
 

@@ -62,7 +62,9 @@ public:
     return result;
   }
 
-  [[nodiscard]] sf::WindowHandle native() const { return handle_; }
+  [[nodiscard]] sf::WindowHandle getHandle() const { return handle_; }
+
+  [[nodiscard]] sf::WindowHandle native() const { return getHandle(); }
 
   [[nodiscard]] std::uintptr_t toInteger() const {
     return integerFromNative(handle_);
@@ -95,7 +97,7 @@ private:
 };
 
 inline sf::WindowHandle window_handle_from_integer(std::uintptr_t value) {
-  return WindowHandle(value).native();
+  return WindowHandle(value).getHandle();
 }
 
 inline std::uintptr_t window_handle_to_integer(sf::WindowHandle handle) {

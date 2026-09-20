@@ -3,9 +3,6 @@ name: Build packages
 run-name: Build LuaSF packages for ${{ github.ref_name }} @ ${{ github.sha }}
 
 on:
-  push:
-    branches:
-      - '**'
   workflow_call:
 
 permissions:
@@ -125,9 +122,11 @@ jobs:
         shell: pwsh
         run: |
           $expectedPackages = @(
-              'output/packages/LuaSF-source${{ matrix.variant_suffix }}.zip',
               'output/packages/LuaSF-embedded${{ matrix.variant_suffix }}-Windows-x64-MSVC.zip'
           )
+          if ('${{ matrix.variant }}' -ne 'ME-OH') {
+              $expectedPackages += 'output/packages/LuaSF-source${{ matrix.variant_suffix }}.zip'
+          }
           foreach ($package in $expectedPackages) {
               if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
                   throw "Missing package: $package"
@@ -327,9 +326,11 @@ jobs:
           set -euo pipefail
 
           expected_packages=(
-              "output/packages/LuaSF-source${{ matrix.variant_suffix }}.tar.gz"
               "output/packages/LuaSF-embedded${{ matrix.variant_suffix }}-macOS-ARM64-clang.tar.gz"
           )
+          if [ '${{ matrix.variant }}' != 'ME-OH' ]; then
+              expected_packages+=("output/packages/LuaSF-source${{ matrix.variant_suffix }}.tar.gz")
+          fi
           for package in "${expected_packages[@]}"; do
               if [ ! -f "$package" ]; then
                   echo "Missing package: $package" >&2
