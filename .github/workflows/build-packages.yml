@@ -25,11 +25,11 @@ jobs:
           - variant: ME
             variant_label: ME
             variant_suffix: '-ME'
-            sfml_tag: '310ME-iOSJoystick'
+            sfml_tag: '310-ME-macOSJoystick'
           - variant: ME-OH
             variant_label: ME-OH
             variant_suffix: '-ME-OH'
-            sfml_tag: '310-ME-OH-GLESVER'
+            sfml_tag: '310-ME-OH-macOSJoystick'
     env:
       CMAKE_GENERATOR: Visual Studio 17 2022
       CMAKE_GENERATOR_PLATFORM: x64
@@ -188,11 +188,11 @@ jobs:
           - variant: ME
             variant_label: ME
             variant_suffix: '-ME'
-            sfml_tag: '310ME-iOSJoystick'
+            sfml_tag: '310-ME-macOSJoystick'
           - variant: ME-OH
             variant_label: ME-OH
             variant_suffix: '-ME-OH'
-            sfml_tag: '310-ME-OH-GLESVER'
+            sfml_tag: '310-ME-OH-macOSJoystick'
     env:
       CMAKE_OSX_ARCHITECTURES: arm64
 
