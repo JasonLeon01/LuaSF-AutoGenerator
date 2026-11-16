@@ -26,7 +26,7 @@ LuaSF 一次只绑定一份 SFML 构建产物。通过 `init` 和 `build` 的第
 | `ME` | `SFML_ME_REPOSITORY` 的 `SFML_ME_TAG` |
 | `ME-OH` | `SFML_ME_OH_REPOSITORY` 的 `SFML_ME_OH_TAG` |
 
-变体只决定下载哪份 SFML、生成哪套绑定。平台差异（iOS、Android、OHOS）由 `CMAKE_SYSTEM_NAME` 决定，因此同一份源码覆盖所有变体。
+变体只决定下载哪份 SFML、生成哪套绑定。平台差异（iOS、Android、OHOS、Emscripten）由 `CMAKE_SYSTEM_NAME` 决定，因此同一份源码覆盖所有变体。Emscripten 使用静态 LuaSF、LuaGlue 和 Lua 库，交叉编译时不会执行目标平台的 `luac` 或声明导出器。需要提供支持 Web 的 SFML 源码；浏览器构建不会绑定该平台不可用的 `sf.TcpListener`。
 
 ## 构建 LuaSF
 

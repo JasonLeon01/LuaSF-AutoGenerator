@@ -14,7 +14,7 @@ add_subdirectory(third_party/LuaGlue)
 target_link_libraries(MyApplication PRIVATE LuaGlue::LuaGlue)
 ```
 
-`LUAGLUE_LUA_TARGET` 为空时，项目自带的 finder 查找 Lua 5.5 并校验头文件版本，兼容尚不能识别 Lua 5.5 数字版本宏的 CMake。可显式设置 `LUA_INCLUDE_DIR`、`LUA_LIBRARY`，或通过 `CMAKE_PREFIX_PATH` 指定安装前缀，不会下载 Lua。`LUAGLUE_BUILD_SHARED` 在桌面默认 `ON`，在 iOS、Android、OHOS 默认 `OFF`。同一进程中的模块必须使用同一套 Lua 与 LuaGlue 运行时；桌面分发需携带共享库。
+`LUAGLUE_LUA_TARGET` 为空时，项目自带的 finder 查找 Lua 5.5 并校验头文件版本，兼容尚不能识别 Lua 5.5 数字版本宏的 CMake。可显式设置 `LUA_INCLUDE_DIR`、`LUA_LIBRARY`，或通过 `CMAKE_PREFIX_PATH` 指定安装前缀，不会下载 Lua。`LUAGLUE_BUILD_SHARED` 在桌面默认 `ON`，在 iOS、Android、OHOS、Emscripten 默认 `OFF`。Emscripten 消费方会继承 C++ 异常支持。同一进程中的模块必须使用同一套 Lua 与 LuaGlue 运行时；桌面分发需携带共享库。
 
 当前支持 `add_subdirectory` 创建的 `LuaGlue::LuaGlue` target，尚未提供安装后的 `find_package(LuaGlue)` 导出包。
 

@@ -39,6 +39,7 @@ EXCLUDED_HEADERS = {
     "Graphics": {
         "Drawable.hpp",
         "Export.hpp",
+        "RHI.hpp",
     },
     "Network": {
         "Export.hpp",
@@ -60,6 +61,7 @@ EXCLUDED_HEADERS = {
         "Vulkan.hpp",
     },
 }
+EXCLUDED_DIRECTORIES = {"Graphics": {"RHI"}}
 
 # Some public aliases are declared in a regular header while the template
 # definitions they expose live in an included implementation file.  Associate
@@ -517,7 +519,11 @@ def collect_headers(include_dir: Path, modules: tuple[str, ...], include_exclude
             continue
         excluded = EXCLUDED_HEADERS.get(module, set())
         for header in sorted(module_dir.rglob("*.hpp")):
-            if not include_excluded and header.name in excluded:
+            excluded_directory = any(
+                part in EXCLUDED_DIRECTORIES.get(module, set())
+                for part in header.relative_to(module_dir).parts[:-1]
+            )
+            if not include_excluded and (header.name in excluded or excluded_directory):
                 continue
             headers.append(header)
     return sorted(headers)
@@ -542,7 +548,7 @@ def build_api(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     for header in headers:
-        relative_header = header.relative_to(project_root).as_posix()
+        relative_header = Path(os.path.relpath(header, project_root)).as_posix()
         files.append(
             {
                 "path": relative_header,
@@ -558,7 +564,7 @@ def build_api(args: argparse.Namespace) -> dict[str, Any]:
         "generator": Path(__file__).name,
         "platform": platform.platform(),
         "libclang": args.libclang,
-        "include_dir": include_dir.relative_to(project_root).as_posix(),
+        "include_dir": Path(os.path.relpath(include_dir, project_root)).as_posix(),
         "standard": args.standard,
         "modules": list(modules),
         "excluded_headers": {module: sorted(headers) for module, headers in EXCLUDED_HEADERS.items()},

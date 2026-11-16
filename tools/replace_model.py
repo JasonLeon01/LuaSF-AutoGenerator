@@ -16,6 +16,7 @@ from typing import Any
 
 try:
     from .binding_config import (
+        BINDING_PLATFORM_GUARDS,
         BINDING_TEMPLATES,
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
@@ -71,6 +72,7 @@ try:
     )
 except ImportError:
     from binding_config import (
+        BINDING_PLATFORM_GUARDS,
         BINDING_TEMPLATES,
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
@@ -129,6 +131,7 @@ except ImportError:
 __all__ = [
     # From binding_config (re-exported for convenience)
     "BINDING_TEMPLATES",
+    "BINDING_PLATFORM_GUARDS",
     "BYTE_TYPES",
     "CALLBACK_CODEC_REGISTRY",
     "CALLBACK_CODEC_SCHEMA_VERSION",

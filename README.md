@@ -26,7 +26,7 @@ LuaSF binds one SFML build at a time. Select the variant with the second positio
 | `ME` | `SFML_ME_REPOSITORY` at `SFML_ME_TAG` |
 | `ME-OH` | `SFML_ME_OH_REPOSITORY` at `SFML_ME_OH_TAG` |
 
-The variant only selects which SFML is downloaded and which bindings are generated. Platform differences (iOS, Android, OHOS) are decided by `CMAKE_SYSTEM_NAME`, so a single source tree covers every variant.
+The variant only selects which SFML is downloaded and which bindings are generated. Platform differences (iOS, Android, OHOS, Emscripten) are decided by `CMAKE_SYSTEM_NAME`, so a single source tree covers every variant. Emscripten builds use static LuaSF, LuaGlue and Lua libraries and do not execute a target `luac` or stub writer while cross-compiling. Supply an SFML source tree with Web support; the browser build omits `sf.TcpListener`, which is unavailable there.
 
 ## Build LuaSF
 

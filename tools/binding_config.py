@@ -23,6 +23,10 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 
+BINDING_PLATFORM_GUARDS = {
+    "bind_TcpListener": "!defined(SFML_SYSTEM_EMSCRIPTEN)",
+}
+
 
 # ===========================================================================
 # 0. Shared utilities
@@ -384,6 +388,8 @@ def qualify_sfml_template_aliases(value: str, canonical: str) -> str:
 def semantic_cpp_type(spelling: str, canonical: str) -> str:
     source = clean_cpp_type(spelling or canonical)
     canonical = clean_cpp_type(canonical or spelling)
+    if core_cpp_type(canonical).startswith("std::variant<"):
+        return canonical
     if source:
         return qualify_public_spelling(source, canonical)
     return canonical
@@ -1102,7 +1108,7 @@ IGNORE_RETURN_TYPES: frozenset[str] = frozenset({
     "GlFunctionPointer",
 })
 
-IGNORED_NAMESPACES: frozenset[str] = frozenset({"priv"})
+IGNORED_NAMESPACES: frozenset[str] = frozenset({"priv", "rhi"})
 
 NUMERIC_ARRAY_TYPES: frozenset[str] = frozenset({
     "short",

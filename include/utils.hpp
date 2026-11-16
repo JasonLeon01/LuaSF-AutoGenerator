@@ -79,7 +79,7 @@ private:
         std::uintptr_t value) {
 #if defined(SFML_SYSTEM_WINDOWS) || defined(SFML_SYSTEM_MACOS) || \
     defined(SFML_SYSTEM_IOS) || defined(SFML_SYSTEM_ANDROID) ||   \
-    defined(SFML_SYSTEM_HARMONY)
+    defined(SFML_SYSTEM_HARMONY) || defined(SFML_SYSTEM_EMSCRIPTEN)
         return reinterpret_cast<sf::WindowHandle>(value);
 #else
         return static_cast<sf::WindowHandle>(value);
@@ -90,7 +90,7 @@ private:
         sf::WindowHandle handle) {
 #if defined(SFML_SYSTEM_WINDOWS) || defined(SFML_SYSTEM_MACOS) || \
     defined(SFML_SYSTEM_IOS) || defined(SFML_SYSTEM_ANDROID) ||   \
-    defined(SFML_SYSTEM_HARMONY)
+    defined(SFML_SYSTEM_HARMONY) || defined(SFML_SYSTEM_EMSCRIPTEN)
         return reinterpret_cast<std::uintptr_t>(handle);
 #else
         return static_cast<std::uintptr_t>(handle);

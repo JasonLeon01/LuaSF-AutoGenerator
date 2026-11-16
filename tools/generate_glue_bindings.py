@@ -11,6 +11,7 @@ from typing import Any
 try:
     from .output_files import write_text_if_changed
     from .replace_model import (
+        BINDING_PLATFORM_GUARDS,
         BINDING_TEMPLATES,
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
@@ -68,6 +69,7 @@ try:
 except ImportError:
     from output_files import write_text_if_changed
     from replace_model import (
+        BINDING_PLATFORM_GUARDS,
         BINDING_TEMPLATES,
         BYTE_TYPES,
         CALLBACK_CODEC_REGISTRY,
@@ -1263,8 +1265,12 @@ def cpp_type_to_lua_type(value: str) -> str:
     if base.endswith("*") and not is_char_pointer(base):
         base = remove_pointer(base)
 
-    if not base or base == "void":
+    if not base or base in {"void", "std::monostate"}:
         return "nil"
+    if is_template(base, "std::variant"):
+        return "|".join(dict.fromkeys(
+            cpp_type_to_lua_type(element) for element in split_template_args(base)
+        ))
     if is_template(base, "lua_sf::LuaIntegral"):
         return "integer"
     if base in {"bool"}:
@@ -2294,18 +2300,21 @@ class GlueGenerator:
         cpp_path = src_dir / f"bind_{stem}.cpp"
         original_include = sfml_include_for_file(file_item)
         extra_includes = self._extra_includes_for_file(file_item, original_include)
+        guard = BINDING_PLATFORM_GUARDS.get(f"bind_{stem}")
 
         write_text_if_changed(hpp_path,
             "\n".join(
                 [
                     "#pragma once",
                     "",
+                    *(["#include <SFML/Config.hpp>", f"#if {guard}"] if guard else []),
                     f'#include <{original_include}>',
                     *[f"#include <{include}>" for include in extra_includes],
                     '#include "utils.hpp"',
                     '#include "LuaSFValueTraits.hpp"',
                     "",
                     f"void bind_{stem}(lua_glue::StateView lua);",
+                    *(["#endif"] if guard else []),
                     "",
                 ]
             ),
@@ -2320,6 +2329,7 @@ class GlueGenerator:
         cpp_lines = [
             f'#include "{module}/bind_{stem}.hpp"',
             "",
+            *([f"#if {guard}"] if guard else []),
             "#include <algorithm>",
             "#include <array>",
             "#include <string_view>",
@@ -2339,6 +2349,7 @@ class GlueGenerator:
             "    lua_glue::Table sf = lua_sf::sf_table(lua);",
             *body_lines,
             "}",
+            *(["#endif"] if guard else []),
             "",
         ]
         write_text_if_changed(cpp_path, "\n".join(cpp_lines), encoding="utf-8")
@@ -2802,6 +2813,12 @@ class GlueGenerator:
         target_cpp = clean_cpp_type(type_ref.canonical_cpp or type_ref.cpp or type_ref.source)
         if not target_cpp:
             return []
+        if is_template(target_cpp, "std::variant"):
+            return [
+                *stub_doc_lines(item),
+                f'    LUASF_STUB_ALIAS({cpp_string_literal(f"{owner_lua_path}.{name}")}, '
+                f'{cpp_string_literal(cpp_type_to_lua_type(target_cpp))});',
+            ]
         if is_std_function(type_ref):
             alias_lua = f"{owner_lua_path}.{name}"
             callback_codec = callback_codec_for_alias(qualified_name)

@@ -12,6 +12,7 @@ from typing import Any
 try:
     from .output_files import copy_file_if_changed, write_text_if_changed
     from .replace_model import (
+        BINDING_PLATFORM_GUARDS,
         MANUAL_DEPENDENCIES,
         MANUAL_HEADER_DECLARATION_PREFIX_OWNERS,
         MANUAL_HEADER_OWNERS,
@@ -23,6 +24,7 @@ try:
 except ImportError:
     from output_files import copy_file_if_changed, write_text_if_changed
     from replace_model import (
+        BINDING_PLATFORM_GUARDS,
         MANUAL_DEPENDENCIES,
         MANUAL_HEADER_DECLARATION_PREFIX_OWNERS,
         MANUAL_HEADER_OWNERS,
@@ -693,7 +695,11 @@ def render_outputs(
     public_header = rel(public_header_output, cmake_project_root)
     headers = collect_header_paths(cmake_project_root, entries, order, {public_header})
     includes = "\n".join(f'#include "{entries[name].include_path}"' for name in order)
-    bind_calls = "\n".join(f"    {name}(lua);" for name in order)
+    bind_calls = "\n".join(
+        f"#if {BINDING_PLATFORM_GUARDS[name]}\n    {name}(lua);\n#endif"
+        if name in BINDING_PLATFORM_GUARDS else f"    {name}(lua);"
+        for name in order
+    )
 
     write_text_if_changed(cmake_output,
         cmake_template.read_text(encoding="utf-8").format(

@@ -14,7 +14,7 @@ add_subdirectory(third_party/LuaGlue)
 target_link_libraries(MyApplication PRIVATE LuaGlue::LuaGlue)
 ```
 
-If `LUAGLUE_LUA_TARGET` is empty, the project's finder locates Lua 5.5 and verifies its header version, including with CMake versions that cannot recognize Lua 5.5's numeric version macros. Set `LUA_INCLUDE_DIR` and `LUA_LIBRARY` explicitly, or supply the installation through `CMAKE_PREFIX_PATH`. LuaGlue does not download Lua. `LUAGLUE_BUILD_SHARED` defaults to `ON` on desktop and `OFF` on iOS, Android and OHOS. All modules in a process must use the same Lua and LuaGlue runtimes. Distribute the shared library with desktop consumers.
+If `LUAGLUE_LUA_TARGET` is empty, the project's finder locates Lua 5.5 and verifies its header version, including with CMake versions that cannot recognize Lua 5.5's numeric version macros. Set `LUA_INCLUDE_DIR` and `LUA_LIBRARY` explicitly, or supply the installation through `CMAKE_PREFIX_PATH`. LuaGlue does not download Lua. `LUAGLUE_BUILD_SHARED` defaults to `ON` on desktop and `OFF` on iOS, Android, OHOS and Emscripten. Emscripten consumers inherit C++ exception support. All modules in a process must use the same Lua and LuaGlue runtimes. Distribute the shared library with desktop consumers.
 
 The supported CMake interface is the `LuaGlue::LuaGlue` target created by `add_subdirectory`. An installed `find_package(LuaGlue)` export is not currently provided.
 
