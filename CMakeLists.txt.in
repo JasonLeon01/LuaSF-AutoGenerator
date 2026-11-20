@@ -75,8 +75,15 @@ set(SFML_BUILD_EXAMPLES OFF)
 set(SFML_BUILD_DOC OFF)
 set(SFML_BUILD_TEST_SUITE OFF)
 
-if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target")
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    # project() seeds an empty CMAKE_OSX_DEPLOYMENT_TARGET cache entry, so a plain
+    # CACHE set is a no-op and FORCE is required. SFML needs a concrete floor
+    # (>= 13.0 on macOS, >= 16.0 on iOS) and rejects an empty value.
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS deployment target" FORCE)
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
+    endif()
 endif()
 
 if(NOT TARGET sfml-system)
