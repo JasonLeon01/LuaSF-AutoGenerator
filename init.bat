@@ -6,20 +6,13 @@ for /f "usebackq eol=# tokens=1,2 delims==" %%a in ("versions.conf") do set %%a=
 
 if "%~1"=="" goto :variant_default
 if /i "%~1"=="ME" goto :variant_me
-if /i "%~1"=="ME-OH" goto :variant_me_oh
-echo Unknown SFML variant "%~1". Use ME or ME-OH.
+echo Unknown SFML variant "%~1". Use ME.
 exit /b 2
 
 :variant_me
 set "SFML_VARIANT=ME"
 set "SFML_VARIANT_REPOSITORY=%SFML_ME_REPOSITORY%"
 set "SFML_VARIANT_TAG=%SFML_ME_TAG%"
-goto :variant_ready
-
-:variant_me_oh
-set "SFML_VARIANT=ME-OH"
-set "SFML_VARIANT_REPOSITORY=%SFML_ME_OH_REPOSITORY%"
-set "SFML_VARIANT_TAG=%SFML_ME_OH_TAG%"
 goto :variant_ready
 
 :variant_default

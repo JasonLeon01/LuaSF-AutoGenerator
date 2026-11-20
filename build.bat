@@ -7,7 +7,7 @@ set "CONFIG_OVERRIDE=%~1"
 set "PYTHON_EXE=.venv\Scripts\python.exe"
 
 if not "%~3"=="" (
-    echo Usage: build.bat [Debug^|Release^|RelWithDebInfo^|MinSizeRel] [ME^|ME-OH]
+    echo Usage: build.bat [Debug^|Release^|RelWithDebInfo^|MinSizeRel] [ME]
     exit /b 2
 )
 
@@ -20,18 +20,12 @@ for /f "usebackq eol=# tokens=1,2 delims==" %%a in ("versions.conf") do set %%a=
 
 if "%~2"=="" goto :variant_default
 if /i "%~2"=="ME" goto :variant_me
-if /i "%~2"=="ME-OH" goto :variant_me_oh
-echo Unknown SFML variant "%~2". Use ME or ME-OH.
+echo Unknown SFML variant "%~2". Use ME.
 exit /b 2
 
 :variant_me
 set "SFML_VARIANT=ME"
 set "SFML_VARIANT_TAG=%SFML_ME_TAG%"
-goto :variant_ready
-
-:variant_me_oh
-set "SFML_VARIANT=ME-OH"
-set "SFML_VARIANT_TAG=%SFML_ME_OH_TAG%"
 goto :variant_ready
 
 :variant_default

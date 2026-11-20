@@ -24,7 +24,6 @@ LuaSF 一次只绑定一份 SFML 构建产物。通过 `init` 和 `build` 的第
 | --- | --- |
 | *(省略)* | 上游 SFML `SFML_VERSION` |
 | `ME` | `SFML_ME_REPOSITORY` 的 `SFML_ME_TAG` |
-| `ME-OH` | `SFML_ME_OH_REPOSITORY` 的 `SFML_ME_OH_TAG` |
 
 变体只决定下载哪份 SFML、生成哪套绑定。平台差异（iOS、Android、OHOS、Emscripten）由 `CMAKE_SYSTEM_NAME` 决定，因此同一份源码覆盖所有变体。Emscripten 使用静态 LuaSF、LuaGlue 和 Lua 库，交叉编译时不会执行目标平台的 `luac` 或声明导出器。需要提供支持 Web 的 SFML 源码；浏览器构建不会绑定该平台不可用的 `sf.TcpListener`。
 
@@ -78,7 +77,7 @@ pack_result.bat
 sh pack_result.sh
 ```
 
-无需收集二进制、仅打包生成源码时，运行 `sh pack_result.sh --source-only` 或 `pack_result.bat --source-only`。此模式保留 `output/packages/` 中的其他压缩包；在 `ME-OH` 工作区生成 `LuaSF-source-ME`，因为两者共用绑定接口。源码包仅包含 `LuaSF/` 与 `LuaGlue/` 两个工程。
+无需收集二进制、仅打包生成源码时，运行 `sh pack_result.sh --source-only` 或 `pack_result.bat --source-only`。此模式保留 `output/packages/` 中的其他压缩包。源码包仅包含 `LuaSF/` 与 `LuaGlue/` 两个工程。
 
 压缩包会写入 `output/packages/`：
 
@@ -86,15 +85,14 @@ sh pack_result.sh
 | --- | --- | --- |
 | 上游 SFML | `LuaSF-source.{tar.gz\|zip}` | `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 | `ME` | `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
-| `ME-OH` | 使用 `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 
 `pack_result.sh` 生成 `.tar.gz` 压缩包，`pack_result.bat` 生成 `.zip` 压缩包。
 
-ME 与 ME-OH 的绑定接口相同，因此默认 ME-OH 打包只生成嵌入式包。ME 源码包同时支持这两个变体；源码包不包含 SFML。
+源码包不包含 SFML。
 
-无需推送 tag 时，可在 GitHub 打开 **Actions → Build packages → Run workflow**，选择要构建的分支。这会运行 Windows VS2022 x64 与 macOS arm64 的 default、ME、ME-OH 构建矩阵，检查包并上传可下载的 Actions artifacts，不创建 Release。GitHub 要求默认分支中已存在支持手动触发的 workflow，才会提供此入口。
+无需推送 tag 时，可在 GitHub 打开 **Actions → Build packages → Run workflow**，选择要构建的分支。这会运行 Windows VS2022 x64 与 macOS arm64 的 default 与 ME 构建矩阵，检查包并上传可下载的 Actions artifacts，不创建 Release。GitHub 要求默认分支中已存在支持手动触发的 workflow，才会提供此入口。
 
-推送 `v*` tag 会运行发布工作流。所有构建及包检查通过后，创建包含十个附件的草稿 Release：四个源码包、六个嵌入式包。普通分支推送不运行 CI，工作流不会发布草稿或覆盖已有 Release。
+推送 `v*` tag 会运行发布工作流。所有构建及包检查通过后，创建包含八个附件的草稿 Release：四个源码包、四个嵌入式包。普通分支推送不运行 CI，工作流不会发布草稿或覆盖已有 Release。
 
 ## 从 CMake 工程使用
 
@@ -349,8 +347,7 @@ LuaSF 不附带这些依赖；版本表记录构建脚本会下载哪些变体�
 | 依赖 | 版本 | 许可证 |
 | --- | --- | --- |
 | [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
-| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `310-ME-macOSJoystick` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
-| [SFML-ME-OH](https://github.com/JasonLeon01/SFML-ME) | `310-ME-OH-macOSJoystick` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `MRB3100` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 
 SFML 还可能附带其他外部库，这些库遵循各自的许可证；详见 SFML 文档以及 `third_party/SFML/license.md`。

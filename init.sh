@@ -5,7 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
 if [ "$#" -gt 1 ]; then
-    echo "Usage: sh init.sh [ME|ME-OH]" >&2
+    echo "Usage: sh init.sh [ME]" >&2
     exit 2
 fi
 
@@ -17,8 +17,6 @@ SFML_REPOSITORY=
 SFML_TAG=
 SFML_ME_REPOSITORY=
 SFML_ME_TAG=
-SFML_ME_OH_REPOSITORY=
-SFML_ME_OH_TAG=
 LUA_VERSION=
 LUA_SHA256=
 
@@ -31,8 +29,6 @@ while IFS='=' read -r key value; do
         SFML_TAG) SFML_TAG=$value ;;
         SFML_ME_REPOSITORY) SFML_ME_REPOSITORY=$value ;;
         SFML_ME_TAG) SFML_ME_TAG=$value ;;
-        SFML_ME_OH_REPOSITORY) SFML_ME_OH_REPOSITORY=$value ;;
-        SFML_ME_OH_TAG) SFML_ME_OH_TAG=$value ;;
         LUA_VERSION) LUA_VERSION=$value ;;
         LUA_SHA256) LUA_SHA256=$value ;;
     esac
@@ -40,7 +36,6 @@ done < versions.conf
 
 if [ -z "$SFML_REPOSITORY" ] || [ -z "$SFML_TAG" ] ||
    [ -z "$SFML_ME_REPOSITORY" ] || [ -z "$SFML_ME_TAG" ] ||
-   [ -z "$SFML_ME_OH_REPOSITORY" ] || [ -z "$SFML_ME_OH_TAG" ] ||
    [ -z "$LUA_VERSION" ] || [ -z "$LUA_SHA256" ]; then
     echo "Missing required versions in versions.conf." >&2
     exit 1
@@ -57,13 +52,8 @@ case "${1:-}" in
         SFML_VARIANT_REPOSITORY=$SFML_ME_REPOSITORY
         SFML_VARIANT_TAG=$SFML_ME_TAG
         ;;
-    ME-OH|me-oh)
-        SFML_VARIANT=ME-OH
-        SFML_VARIANT_REPOSITORY=$SFML_ME_OH_REPOSITORY
-        SFML_VARIANT_TAG=$SFML_ME_OH_TAG
-        ;;
     *)
-        echo "Unknown SFML variant '$1'. Use ME or ME-OH." >&2
+        echo "Unknown SFML variant '$1'. Use ME." >&2
         exit 2
         ;;
 esac

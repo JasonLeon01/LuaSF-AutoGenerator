@@ -20,12 +20,10 @@ env:
     LuaSF-embedded-Windows-x64-MSVC.zip
     LuaSF-source-ME.zip
     LuaSF-embedded-ME-Windows-x64-MSVC.zip
-    LuaSF-embedded-ME-OH-Windows-x64-MSVC.zip
     LuaSF-source.tar.gz
     LuaSF-embedded-macOS-ARM64-clang.tar.gz
     LuaSF-source-ME.tar.gz
     LuaSF-embedded-ME-macOS-ARM64-clang.tar.gz
-    LuaSF-embedded-ME-OH-macOS-ARM64-clang.tar.gz
 
 jobs:
   build-packages:
@@ -94,7 +92,7 @@ jobs:
               exit 1
           fi
 
-      - name: Create draft release with ten assets
+      - name: Create draft release with eight assets
         shell: bash
         run: |
           set -euo pipefail

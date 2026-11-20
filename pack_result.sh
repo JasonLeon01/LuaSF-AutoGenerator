@@ -140,11 +140,7 @@ if [ -n "$SFML_VARIANT" ]; then
     VARIANT_SUFFIX="-$SFML_VARIANT"
 fi
 
-SOURCE_VARIANT_SUFFIX=$VARIANT_SUFFIX
-if [ "$SFML_VARIANT" = "ME-OH" ]; then
-    SOURCE_VARIANT_SUFFIX=-ME
-fi
-SOURCE_NAME="LuaSF-source${SOURCE_VARIANT_SUFFIX}"
+SOURCE_NAME="LuaSF-source${VARIANT_SUFFIX}"
 EMBEDDED_NAME="LuaSF-embedded${VARIANT_SUFFIX}-${PLATFORM_TAG}"
 
 SOURCE_ARCHIVE="$PACKAGES_DIR/${SOURCE_NAME}.tar.gz"
@@ -165,18 +161,15 @@ fi
 mkdir -p "$STAGING_DIR"
 
 # Source archives contain only the two reusable CMake source projects.
-# ME-OH consumes the ME source package; only its embedded package is distinct.
-if [ "$SFML_VARIANT" != "ME-OH" ] || [ "$SOURCE_ONLY" -eq 1 ]; then
-    for source_project in LuaSF LuaGlue; do
-        if [ ! -f "$OUTPUT_DIR/$source_project/CMakeLists.txt" ]; then
-            echo "Missing source project $source_project. Run sh build.sh first." >&2
-            exit 1
-        fi
-        mkdir -p "$STAGING_DIR/$source_project"
-        (cd "$OUTPUT_DIR/$source_project" && tar --exclude=build --exclude=.git --exclude=__pycache__ --exclude=.cache -cf - .) |
-            (cd "$STAGING_DIR/$source_project" && tar -xf -)
-    done
-fi
+for source_project in LuaSF LuaGlue; do
+    if [ ! -f "$OUTPUT_DIR/$source_project/CMakeLists.txt" ]; then
+        echo "Missing source project $source_project. Run sh build.sh first." >&2
+        exit 1
+    fi
+    mkdir -p "$STAGING_DIR/$source_project"
+    (cd "$OUTPUT_DIR/$source_project" && tar --exclude=build --exclude=.git --exclude=__pycache__ --exclude=.cache -cf - .) |
+        (cd "$STAGING_DIR/$source_project" && tar -xf -)
+done
 
 # Embedded package with a named top-level folder.
 if [ "$SOURCE_ONLY" -eq 0 ]; then
@@ -186,10 +179,8 @@ fi
 
 (
     cd "$STAGING_DIR"
-    if [ "$SFML_VARIANT" != "ME-OH" ] || [ "$SOURCE_ONLY" -eq 1 ]; then
-        tar -czf "$STAGING_DIR/${SOURCE_NAME}.tar.gz" LuaSF LuaGlue
-        mv "$STAGING_DIR/${SOURCE_NAME}.tar.gz" "$SOURCE_ARCHIVE"
-    fi
+    tar -czf "$STAGING_DIR/${SOURCE_NAME}.tar.gz" LuaSF LuaGlue
+    mv "$STAGING_DIR/${SOURCE_NAME}.tar.gz" "$SOURCE_ARCHIVE"
     if [ "$SOURCE_ONLY" -eq 0 ]; then
         tar -czf "$EMBEDDED_ARCHIVE" "$EMBEDDED_NAME"
     fi
@@ -199,11 +190,7 @@ rm -rf "$STAGING_DIR"
 
 echo
 echo "Done."
-if [ "$SFML_VARIANT" != "ME-OH" ] || [ "$SOURCE_ONLY" -eq 1 ]; then
-    echo "Source: $SOURCE_ARCHIVE"
-else
-    echo "Source: use LuaSF-source-ME"
-fi
+echo "Source: $SOURCE_ARCHIVE"
 if [ "$SOURCE_ONLY" -eq 0 ]; then
     echo "Embedded: $EMBEDDED_ARCHIVE"
 fi

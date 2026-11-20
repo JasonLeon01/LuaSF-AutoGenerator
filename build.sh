@@ -8,7 +8,7 @@ CONFIG_OVERRIDE=${1:-}
 PYTHON_EXE=".venv/bin/python"
 
 if [ "$#" -gt 2 ]; then
-    echo "Usage: sh build.sh [Debug|Release|RelWithDebInfo|MinSizeRel] [ME|ME-OH]" >&2
+    echo "Usage: sh build.sh [Debug|Release|RelWithDebInfo|MinSizeRel] [ME]" >&2
     exit 2
 fi
 
@@ -19,7 +19,6 @@ fi
 
 SFML_TAG=
 SFML_ME_TAG=
-SFML_ME_OH_TAG=
 
 while IFS='=' read -r key value; do
     value=$(printf '%s' "$value" | tr -d '\r')
@@ -27,7 +26,6 @@ while IFS='=' read -r key value; do
         ''|'#'*) continue ;;
         SFML_TAG) SFML_TAG=$value ;;
         SFML_ME_TAG) SFML_ME_TAG=$value ;;
-        SFML_ME_OH_TAG) SFML_ME_OH_TAG=$value ;;
     esac
 done < versions.conf
 
@@ -40,12 +38,8 @@ case "${2:-}" in
         SFML_VARIANT=ME
         SFML_VARIANT_TAG=$SFML_ME_TAG
         ;;
-    ME-OH|me-oh)
-        SFML_VARIANT=ME-OH
-        SFML_VARIANT_TAG=$SFML_ME_OH_TAG
-        ;;
     *)
-        echo "Unknown SFML variant '$2'. Use ME or ME-OH." >&2
+        echo "Unknown SFML variant '$2'. Use ME." >&2
         exit 2
         ;;
 esac
@@ -61,7 +55,7 @@ if [ "$(cat "third_party/SFML/.luasf-sfml-tag" 2>/dev/null || true)" != "$SFML_V
     exit 1
 fi
 
-if [ -z "$SFML_TAG" ] || [ -z "$SFML_ME_TAG" ] || [ -z "$SFML_ME_OH_TAG" ]; then
+if [ -z "$SFML_TAG" ] || [ -z "$SFML_ME_TAG" ]; then
     echo "Missing SFML entries in versions.conf." >&2
     exit 1
 fi

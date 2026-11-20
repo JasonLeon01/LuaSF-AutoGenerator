@@ -73,9 +73,7 @@ set "SFML_VARIANT="
 if exist "%CD%\.luasf-sfml-variant" set /p SFML_VARIANT=<"%CD%\.luasf-sfml-variant"
 set "VARIANT_SUFFIX="
 if not "%SFML_VARIANT%"=="" set "VARIANT_SUFFIX=-%SFML_VARIANT%"
-set "SOURCE_VARIANT_SUFFIX=%VARIANT_SUFFIX%"
-if "%SFML_VARIANT%"=="ME-OH" set "SOURCE_VARIANT_SUFFIX=-ME"
-set "SOURCE_NAME=LuaSF-source%SOURCE_VARIANT_SUFFIX%"
+set "SOURCE_NAME=LuaSF-source%VARIANT_SUFFIX%"
 set "EMBEDDED_NAME=LuaSF-embedded%VARIANT_SUFFIX%-%PLATFORM_TAG%"
 set "SOURCE_ZIP=%PACKAGES_DIR%\%SOURCE_NAME%.zip"
 set "EMBEDDED_ZIP=%PACKAGES_DIR%\%EMBEDDED_NAME%.zip"
@@ -93,7 +91,6 @@ if "%SOURCE_ONLY%"=="0" (
 mkdir "%STAGING_DIR%"
 
 rem Source archive contains exactly the LuaSF and LuaGlue CMake projects.
-if "%SOURCE_ONLY%"=="0" if "%SFML_VARIANT%"=="ME-OH" goto :pack_embedded
 for %%P in (LuaSF LuaGlue) do (
     if not exist "%OUTPUT_DIR%\%%P\CMakeLists.txt" (
         echo Missing source project %%P. Run build.bat first.
@@ -112,7 +109,6 @@ move /Y "%STAGING_DIR%\%SOURCE_NAME%.zip" "%SOURCE_ZIP%" >nul
 if errorlevel 1 exit /b 1
 if "%SOURCE_ONLY%"=="1" goto :pack_done
 
-:pack_embedded
 mkdir "%STAGING_DIR%\%EMBEDDED_NAME%"
 xcopy /e /i /q /y "%EMBEDDED_RESULT_DIR%\*" "%STAGING_DIR%\%EMBEDDED_NAME%\" >nul
 
@@ -127,13 +123,7 @@ rmdir /s /q "%STAGING_DIR%"
 
 echo.
 echo Done.
-if "%SOURCE_ONLY%"=="1" (
-    echo Source: %SOURCE_ZIP%
-) else if "%SFML_VARIANT%"=="ME-OH" (
-    echo Source: use LuaSF-source-ME
-) else (
-    echo Source: %SOURCE_ZIP%
-)
+echo Source: %SOURCE_ZIP%
 if "%SOURCE_ONLY%"=="0" echo Embedded: %EMBEDDED_ZIP%
 exit /b 0
 

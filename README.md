@@ -24,7 +24,6 @@ LuaSF binds one SFML build at a time. Select the variant with the second positio
 | --- | --- |
 | *(omitted)* | upstream SFML `SFML_VERSION` |
 | `ME` | `SFML_ME_REPOSITORY` at `SFML_ME_TAG` |
-| `ME-OH` | `SFML_ME_OH_REPOSITORY` at `SFML_ME_OH_TAG` |
 
 The variant only selects which SFML is downloaded and which bindings are generated. Platform differences (iOS, Android, OHOS, Emscripten) are decided by `CMAKE_SYSTEM_NAME`, so a single source tree covers every variant. Emscripten builds use static LuaSF, LuaGlue and Lua libraries and do not execute a target `luac` or stub writer while cross-compiling. Supply an SFML source tree with Web support; the browser build omits `sf.TcpListener`, which is unavailable there.
 
@@ -78,7 +77,7 @@ pack_result.bat
 sh pack_result.sh
 ```
 
-To package generated sources without collecting binaries, run `sh pack_result.sh --source-only` or `pack_result.bat --source-only`. This preserves other archives in `output/packages/`; for an `ME-OH` workspace it creates `LuaSF-source-ME`, since both variants share the binding API. The source archive contains only the `LuaSF/` and `LuaGlue/` projects.
+To package generated sources without collecting binaries, run `sh pack_result.sh --source-only` or `pack_result.bat --source-only`. This preserves other archives in `output/packages/`. The source archive contains only the `LuaSF/` and `LuaGlue/` projects.
 
 Archives are written to `output/packages/`:
 
@@ -86,15 +85,14 @@ Archives are written to `output/packages/`:
 | --- | --- | --- |
 | upstream SFML | `LuaSF-source.{tar.gz\|zip}` | `LuaSF-embedded-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 | `ME` | `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
-| `ME-OH` | Use `LuaSF-source-ME.{tar.gz\|zip}` | `LuaSF-embedded-ME-OH-{OS}-{ARCH}-{COMPILER}.{tar.gz\|zip}` |
 
 `pack_result.sh` creates `.tar.gz` archives. `pack_result.bat` creates `.zip` archives.
 
-ME and ME-OH share the same binding interfaces, so default ME-OH packaging produces only an embedded archive. The ME source archive supports both variants; source archives do not include SFML.
+Source archives do not include SFML.
 
-To build without pushing a tag, open **Actions → Build packages → Run workflow** on GitHub and select the branch to build. This runs the Windows VS2022 x64 and macOS arm64 matrices for the default, ME, and ME-OH variants, checks the packages, and uploads downloadable Actions artifacts. It does not create a Release. GitHub requires the manually runnable workflow to be present on the default branch before this entry is available.
+To build without pushing a tag, open **Actions → Build packages → Run workflow** on GitHub and select the branch to build. This runs the Windows VS2022 x64 and macOS arm64 matrices for the default and ME variants, checks the packages, and uploads downloadable Actions artifacts. It does not create a Release. GitHub requires the manually runnable workflow to be present on the default branch before this entry is available.
 
-Pushing a `v*` tag runs the release workflow. After all builds and package checks pass, it creates a draft Release with ten assets: four source archives and six embedded archives. Ordinary branch pushes do not run CI, and the workflow does not publish the draft or overwrite an existing Release.
+Pushing a `v*` tag runs the release workflow. After all builds and package checks pass, it creates a draft Release with eight assets: four source archives and four embedded archives. Ordinary branch pushes do not run CI, and the workflow does not publish the draft or overwrite an existing Release.
 
 ## Use From A CMake Project
 
@@ -349,8 +347,7 @@ LuaSF does not ship these dependencies; the version table records which variants
 | Dependency | Version | License |
 | --- | --- | --- |
 | [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
-| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `310-ME-macOSJoystick` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
-| [SFML-ME-OH](https://github.com/JasonLeon01/SFML-ME) | `310-ME-OH-macOSJoystick` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `MRB3100` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 
 SFML may also redistribute external libraries under their own licenses; see the SFML documentation and `third_party/SFML/license.md` for details.
