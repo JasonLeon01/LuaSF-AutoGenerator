@@ -90,9 +90,9 @@ Archives are written to `output/packages/`:
 
 Source archives do not include SFML.
 
-To build without pushing a tag, open **Actions → Build packages → Run workflow** on GitHub and select the branch to build. This runs the Windows VS2022 x64 and macOS arm64 matrices for the default and ME variants, checks the packages, and uploads downloadable Actions artifacts. It does not create a Release. GitHub requires the manually runnable workflow to be present on the default branch before this entry is available.
+Every branch or tag push builds the default and ME variants on Windows VS2022 x64 and macOS arm64, checks the packages, and uploads them as Actions artifacts. You can also select a branch under **Actions → Build packages → Run workflow** to run the same checks manually. GitHub shows this option when the workflow is present on the default branch.
 
-Pushing a `v*` tag runs the release workflow. After all builds and package checks pass, it creates a draft Release with eight assets: four source archives and four embedded archives. Ordinary branch pushes do not run CI, and the workflow does not publish the draft or overwrite an existing Release.
+Only a `v*` tag push starts the release workflow. It runs the same builds once, verifies the eight expected assets, and creates a draft Release with four source archives and four embedded archives. An existing Release for that tag stops the workflow.
 
 ## Use From A CMake Project
 
@@ -347,7 +347,7 @@ LuaSF does not ship these dependencies; the version table records which variants
 | Dependency | Version | License |
 | --- | --- | --- |
 | [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
-| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `MRB3100` tag | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `SFML_ME_TAG` in [versions.conf](versions.conf) | [zlib/libpng](https://opensource.org/licenses/Zlib) — see `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 
 SFML may also redistribute external libraries under their own licenses; see the SFML documentation and `third_party/SFML/license.md` for details.

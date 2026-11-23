@@ -3,6 +3,11 @@ name: Build packages
 run-name: Build LuaSF packages for ${{ github.ref_name }} @ ${{ github.sha }}
 
 on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - 'v*' # The release workflow calls this build for version tags.
   workflow_call:
   workflow_dispatch:
 
@@ -21,11 +26,11 @@ jobs:
           - variant: ''
             variant_label: default
             variant_suffix: ''
-            sfml_tag: '3.1.0'
+            sfml_tag_key: SFML_TAG
           - variant: ME
             variant_label: ME
             variant_suffix: '-ME'
-            sfml_tag: 'MRB3100'
+            sfml_tag_key: SFML_ME_TAG
     env:
       CMAKE_GENERATOR: Visual Studio 17 2022
       CMAKE_GENERATOR_PLATFORM: x64
@@ -90,8 +95,10 @@ jobs:
           }
           $actualTag = [string](Get-Content -LiteralPath $tagFile -Raw)
           $actualTag = $actualTag.Trim()
-          if ($actualTag -ne '${{ matrix.sfml_tag }}') {
-              throw "Expected SFML tag '${{ matrix.sfml_tag }}', found '$actualTag'."
+          $versions = ConvertFrom-StringData -StringData (Get-Content -LiteralPath 'versions.conf' -Raw)
+          $expectedTag = $versions['${{ matrix.sfml_tag_key }}']
+          if (-not $expectedTag -or $actualTag -cne $expectedTag) {
+              throw "Expected SFML tag '$expectedTag', found '$actualTag'."
           }
           $variantFile = '.luasf-sfml-variant'
           if (-not (Test-Path -LiteralPath $variantFile -PathType Leaf)) {
@@ -178,11 +185,11 @@ jobs:
           - variant: ''
             variant_label: default
             variant_suffix: ''
-            sfml_tag: '3.1.0'
+            sfml_tag_key: SFML_TAG
           - variant: ME
             variant_label: ME
             variant_suffix: '-ME'
-            sfml_tag: 'MRB3100'
+            sfml_tag_key: SFML_ME_TAG
     env:
       CMAKE_OSX_ARCHITECTURES: arm64
 
@@ -253,8 +260,9 @@ jobs:
               exit 1
           fi
           actual_tag=$(cat third_party/SFML/.luasf-sfml-tag)
-          if [ "$actual_tag" != '${{ matrix.sfml_tag }}' ]; then
-              echo "Expected SFML tag '${{ matrix.sfml_tag }}', found '$actual_tag'." >&2
+          expected_tag=$(sed -n 's/^${{ matrix.sfml_tag_key }}=//p' versions.conf)
+          if [ -z "$expected_tag" ] || [ "$actual_tag" != "$expected_tag" ]; then
+              echo "Expected SFML tag '$expected_tag', found '$actual_tag'." >&2
               exit 1
           fi
 

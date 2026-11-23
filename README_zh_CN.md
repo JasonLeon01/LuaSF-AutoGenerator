@@ -90,9 +90,9 @@ sh pack_result.sh
 
 源码包不包含 SFML。
 
-无需推送 tag 时，可在 GitHub 打开 **Actions → Build packages → Run workflow**，选择要构建的分支。这会运行 Windows VS2022 x64 与 macOS arm64 的 default 与 ME 构建矩阵，检查包并上传可下载的 Actions artifacts，不创建 Release。GitHub 要求默认分支中已存在支持手动触发的 workflow，才会提供此入口。
+每次推送分支或标签，GitHub Actions 都会在 Windows VS2022 x64 和 macOS arm64 上编译 default、ME 两种变体，校验生成的包并将其上传为构建产物。也可以在 **Actions → Build packages → Run workflow** 选择分支，手动运行相同的检查。默认分支包含该工作流时，GitHub 会显示此入口。
 
-推送 `v*` tag 会运行发布工作流。所有构建及包检查通过后，创建包含八个附件的草稿 Release：四个源码包、四个嵌入式包。普通分支推送不运行 CI，工作流不会发布草稿或覆盖已有 Release。
+只有推送 `v*` 标签才会触发发布工作流。它调用同一套构建，核对全部八个产物后，创建附带四个源码包和四个嵌入式包的草稿 Release。如果该标签已有 Release，工作流会停止。
 
 ## 从 CMake 工程使用
 
@@ -347,7 +347,7 @@ LuaSF 不附带这些依赖；版本表记录构建脚本会下载哪些变体�
 | 依赖 | 版本 | 许可证 |
 | --- | --- | --- |
 | [SFML](https://www.sfml-dev.org/) | 3.1.0 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
-| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | `MRB3100` 标签 | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
+| [SFML-ME](https://github.com/JasonLeon01/SFML-ME) | [versions.conf](versions.conf) 中的 `SFML_ME_TAG` | [zlib/libpng](https://opensource.org/licenses/Zlib) — 详见 `third_party/SFML/license.md` |
 | [Lua](https://www.lua.org/) | 5.5.0 | [MIT](https://www.lua.org/license.html) |
 
 SFML 还可能附带其他外部库，这些库遵循各自的许可证；详见 SFML 文档以及 `third_party/SFML/license.md`。
